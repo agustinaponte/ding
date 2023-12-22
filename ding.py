@@ -11,6 +11,12 @@ import logging
 import time
 import argparse
 
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    filename='ding.log',
+    filemode='a'
+    )
 
 ding_banner = """
 ____________.###+..+###-_______________________________________________________
@@ -43,28 +49,21 @@ class Ping_result:
         self.result = result
         self.latency = latency
 
-def printReadme():
-    # Prints README.md in running folder
-    with open('./README.md', 'r') as f:
-        print(f.read())
-    f.close()
-
 def parseArgs():
     # Parse arguments
     parser = argparse.ArgumentParser(
         prog="ding",
         description=ding_banner)
-    parser.add_argument('host',nargs='?')#, metavar='<host>', type=str, help=('Host to be pinged'
+    parser.add_argument('host',nargs='?',help='Host/s to be pinged', metavar='<host>')
     args = parser.parse_args(sys.argv[1:])
     return args
-    #pts, args = getopt.getopt(argv[1:], "hc:lv", ["help", "count=", "lost", "verbose"])
-    #Return arg_help, arg_count, arg_packetLoss, arg_verbose, arg_host
     
 def runningAsAdmin():
     # Checks for root/admin privileges
     if operatingSystem=='windows': return 
     if operatingSystem=='linux': return 
-    if operatingSystem != ('windows' or 'linux'): print("Could not recognize operating system")
+    if operatingSystem != ('windows' or 'linux'): logging.critical("ding does not recognize operating system")
+    sys.exit()
     
 def playSound():
     # Play sound using motherboard speaker
@@ -75,6 +74,7 @@ def ping(host='localhost'):
     #  0 if host responds
     #  1 if host does not respond
     #  2 if host was not found
+    
     def windowsPing(host):
         def findResponseTime(ping_command_result):
             for subtext in ping_command_result.split(" "):
@@ -83,69 +83,73 @@ def ping(host='localhost'):
                     return time
         param = '-n'
         command = ['ping', param, '1', host]
-        text_result = subprocess.run(command, capture_output = True, text = True)
-        ping_command_result = text_result.stdout
-        errors = text_result.stderr
-        if "(0%" in ping_command_result: result = 0
-        if "(100%" in ping_command_result: result = 1
-        if "host" in ping_command_result: result = 2
-        latency = findResponseTime(ping_command_result)
+        logging.debug("Running Windows ping command...")
+        win_ping = subprocess.run(command, capture_output = True, text = True)
+        win_ping_result = win_ping.stdout
+        win_ping_errors = win_ping.stderr
+        if not (win_ping_errors is None): logging.debug(win_ping_errors)
+        if "(0%" in win_ping_result: result = 0
+        if "(100%" in win_ping_result: result = 1
+        if "host" in win_ping_result: result = 2
+        latency = findResponseTime(win_ping_result)
         return Ping_result(result,latency)
+    
     def linuxPing(host):
         param = '-c'
         command = ['ping', param, '1', host]
         return subprocess.call(command,stdout=subprocess.PIPE) == 0
-    #print(host)
+
     if operatingSystem=='windows': return windowsPing(host)
     if operatingSystem =='linux': return linuxPing(host)
     print("There is no ping command defined for this operating system ","(",operatingSystem,")")
+    logging.CRITICAL("Operating System ",operatingSystem,"has not been specified in ding's ping function")
+    sys.exit()
 
 def printStatus(host,sent,received):
     if operatingSystem=='windows':
         os.system('cls')
         #sys.stdout.write("\033[K")
     percentage_received = (100*received/(sent if sent>0 else 1))
-    print("\r","Pinging",host,": Received/sent ",received,"/",sent,'(',str(int(percentage_received)),'% )')
+    print("\r","Pinging",host,":\n Received/sent ",received,"/",sent,'(',str(int(percentage_received)),'% )')
 
 def printLatencyChart(resultv):
-    results_to_plot = 5
-
+    results_to_plot = 10
+    def printLatencyLine(result):
+        if result[0]==0:
+            print(result[1],"ms",end="")
+            print(" "*(6-len(str(result[1]))),end="")
+            print("|","▇"*int((int(result[1])+10)/20),end="")
+            print()
+        if result[0]==1:
+            print("No response")
+        if result[0]==2:
+            print("Host not found")        
+    def plotChart(resultv):
+            for result in resultv:
+                printLatencyLine(result)        
     if len(resultv)<results_to_plot:
-        for resultn,result in enumerate(resultv):
-            if result[0]!=0:
-                print("No response")
-                break
-            print(result[1],"ms",end="")
-            print(" "*(6-len(str(result[1]))),end="")
-            print("▇"*int((int(result[1])+10)/20),end="")
-            print()
+        plotChart(resultv)
     else:
-        resultv = resultv[-results_to_plot:]
-        for resultn,result in enumerate(resultv):
-            if result[0]!=0:
-                print("No response")
-                break
-            print(result[1],"ms",end="")
-            print(" "*(6-len(str(result[1]))),end="")
-            print("▇"*int((int(result[1])+10)/20),end="")
-            print()
-        
+        plotChart(resultv[-results_to_plot:])
 
-    
 #
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 #
 
 def ding():
-    argv=sys.argv
     cont=True
     sent=0
     received=0
     resultv=[]
     
-    # Parse command line arguments:
+    logging.debug("Parsing command line arguments... \n")
+    argv=sys.argv
     argv = parseArgs()
+    logging.debug("Done")
+    
+    logging.debug("Starting main loop...")
     while cont == True:
+        
         response = ping(argv.host)
         sent+=1
         print(response.result)
