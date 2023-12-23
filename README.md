@@ -1,7 +1,7 @@
 # ding
  Like ping, but with sound
 # What does ding do
-By default, ding pings a host and plays a sound each time it receives a response and shows a small chart with latency.
+By default, ding pings a host and plays a sound each time it receives a response. It also displays a small chart showing latency.
 
 # Arguments
 
@@ -9,13 +9,12 @@ By default, ding pings a host and plays a sound each time it receives a response
 Shows help and exits
 
 
-# Algorithm
-Checks for operating system and admin/root privileges
+# ToDo
+Check for operating system and admin/root privileges
 
 If admin/root: Uses lower level ping methods (not implemented yet)
 Else: Uses each os's ping binary (Linux not implemented yet)
 
-# ToDo
 
 `-c <thisMany> | --count <thisMany>
 Sets the amount of ping requests to `<thisMany>` and exits when done. By default, ding pings indefinetely.
@@ -35,7 +34,5 @@ Work with multiple hosts
 # Examples:
 
 ```
-ding | Plays sound and shows help
 ding <host> | Pings a host and plays sound for every response
-ding -d <host> | Pings a host and plays a sound when some responses do not arrive
 ```
