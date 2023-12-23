@@ -10,10 +10,10 @@ Shows help and exits
 
 
 # ToDo
-Check for operating system and admin/root privileges
+Check for admin/root privileges
 
-If admin/root: Uses lower level ping methods (not implemented yet)
-Else: Uses each os's ping binary (Linux not implemented yet)
+If admin/root: Use lower level ping methods
+Else: Use each os's ping binary
 
 
 `-c <thisMany> | --count <thisMany>
