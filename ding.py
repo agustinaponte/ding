@@ -10,6 +10,7 @@ import sys
 import logging
 import time
 import argparse
+from pythonping import ping
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -18,34 +19,56 @@ logging.basicConfig(
     filemode='a'
     )
 
+
+#____________.###+..+###-_______________
+#_____________+###..###+________________
+#_________.+######..#######.____________
+#________+#######.__.########___________
+#_______#####.__________.#####__________
+#_______###._______________+##__________
+#______+##.________________.##+_________
+#______###__________________###_________
+#______##.__________________.##.________
+#_____.##.__________________.##.________
+#_____###____________________###________
+#_____##+____________________+##________
+#____.##.____________________.##._______
+#____###______________________###_______
+#___.############################.______________________________________________
+#+##################################+___________________________________________
+###.__________##########___________##___________________________________________
+#+###############.__.+##############+___________________________________________
+#_____________##########________________________________________________________
+#________________####___________________________________________________________
+
+
 ding_banner = """
-____________.###+..+###-_______________________________________________________
-_____________+###..###+________________________________________________________
-_________.+######..#######._________________█████__███_________________________
-________+#######.__.########_______________░░███__░░░__________________________
-_______#####.__________.#####____________███████__████__████████____███████____
-_______###._______________+##___________███░░███_░░███_░░███░░███__███░░███____
-______+##.________________.##+_________░███_░███__░███__░███_░███_░███_░███____
-______###__________________###_________░███_░███__░███__░███_░███_░███_░███____
-______##.__________________.##.________░░████████_█████_████_█████░░███████____
-_____.##.__________________.##._________░░░░░░░░_░░░░░_░░░░_░░░░░__░░░░░███____
-_____###____________________###____________________________________███_░███____
-_____##+____________________+##___________________________________░░██████_____
-____.##.____________________.##.___________________________________░░░░░░______
-____###______________________###____________Like_ping,_but_with_better_sound___
-___.############################.______________________________________________
-+##################################+___________________________________________
-##.__________##########___________##___________________________________________
-+###############.__.+##############+___________________________________________
-_____________##########________________________________________________________
-________________####___________________________________________________________
+________________________________________
+_____█████__███_________________________
+____░░███__░░░__________________________
+__███████__████__████████____███████____
+_███░░███_░░███_░░███░░███__███░░███____
+░███_░███__░███__░███_░███_░███_░███____
+░███_░███__░███__░███_░███_░███_░███____
+░░████████_█████_████_█████░░███████____
+_░░░░░░░░_░░░░░_░░░░_░░░░░__░░░░░███____
+____________________________███_░███____
+___________________________░░██████_____
+____________________________░░░░░░______
+_____Like_ping,_but_with_better_sound___
+________________________________________
+
+
 """
 operatingSystem = platform.system().lower()
 count = 0
 
 class Ping_result:
+    # Ping_result.result: 
+    # 0 if host responds
+    # 1 if host does not respond
+    # 2 if host was not found
     def __init__(self, result, latency):
-        # set self.result to True if a response was received, False if no response
         self.result = result
         self.latency = latency
 
@@ -53,34 +76,26 @@ def parseArgs():
     # Parse arguments
     parser = argparse.ArgumentParser(
         prog="ding",
-        description=ding_banner)
-    parser.add_argument('host',nargs='?',help='Host/s to be pinged', metavar='<host>')
+        description=ding_banner,
+        epilog='Example: ding google.com')
+    parser.add_argument('host',nargs='?',help='Host to be pinged', metavar='<host>')
     args = parser.parse_args(sys.argv[1:])
     return args
-    
-def runningAsAdmin():
-    # Checks for root/admin privileges
-    if operatingSystem=='windows': return 
-    if operatingSystem=='linux': return 
-    if operatingSystem != ('windows' or 'linux'): logging.critical("ding does not recognize operating system")
-    sys.exit()
+  
     
 def playSound():
     # Play sound using motherboard speaker
     print('\a\b', end='')
-    
-def ping(host='localhost'):
-    # Pings once, returns:
-    #  0 if host responds
-    #  1 if host does not respond
-    #  2 if host was not found
-    
+
+def decideModeAndPing(host='localhost'):
+    # Pings once, returns a Ping_result object
+           
     def windowsPing(host):
         def findResponseTime(ping_command_result):
             for subtext in ping_command_result.split(" "):
                 if 'ms' in subtext:
-                    time = "".join(char for char in subtext if char.isdecimal())
-                    return time
+                    latency = "".join(char for char in subtext if char.isdecimal())
+                    return latency
         param = '-n'
         command = ['ping', param, '1', host]
         logging.debug("Running Windows ping command...")
@@ -94,10 +109,10 @@ def ping(host='localhost'):
         latency = findResponseTime(win_ping_result)
         return Ping_result(result,latency)
     
-    def linuxPing(host):
-        param = '-c'
-        command = ['ping', param, '1', host]
-        return subprocess.call(command,stdout=subprocess.PIPE) == 0
+    #def linuxPing(host):
+    #    param = '-c'
+    #    command = ['ping', param, '1', host]
+    #    return subprocess.call(command,stdout=subprocess.PIPE) == 0
 
     if operatingSystem=='windows': return windowsPing(host)
     if operatingSystem =='linux': return linuxPing(host)
@@ -149,8 +164,7 @@ def ding():
     
     logging.debug("Starting main loop...")
     while cont == True:
-        
-        response = ping(argv.host)
+        response = decideModeAndPing(argv.host)
         sent+=1
         print(response.result)
         if response.result==0:
