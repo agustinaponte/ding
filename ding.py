@@ -11,6 +11,7 @@ import logging
 import time
 import argparse
 from pythonping import ping
+import traceback
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -152,32 +153,37 @@ def printLatencyChart(resultv):
 #
 
 def ding():
-    cont=True
-    sent=0
-    received=0
-    resultv=[]
-    
-    logging.debug("Parsing command line arguments... \n")
-    argv=sys.argv
-    argv = parseArgs()
-    logging.debug("Done")
-    
-    logging.debug("Starting main loop...")
-    while cont == True:
-        response = decideModeAndPing(argv.host)
-        sent+=1
-        print(response.result)
-        if response.result==0:
-            playSound()
-            received+=1
-        if response.result==2:
-            print("Host",argv.host,"not found")
-
-        resultv.append([response.result, response.latency])
-        printStatus(argv.host,sent,received)
-        printLatencyChart(resultv)
-        time.sleep(2)
+    try:
+        cont=True
+        sent=0
+        received=0
+        resultv=[]
         
+        logging.debug("Parsing command line arguments... \n")
+        argv=sys.argv
+        argv = parseArgs()
+        logging.debug("Done")
+        
+        logging.debug("Starting main loop...")
+        while cont == True:
+            response = decideModeAndPing(argv.host)
+            sent+=1
+            print(response.result)
+            if response.result==0:
+                playSound()
+                received+=1
+            if response.result==2:
+                print("Host",argv.host,"not found")
+
+            resultv.append([response.result, response.latency])
+            printStatus(argv.host,sent,received)
+            printLatencyChart(resultv)
+            time.sleep(2)
+    except KeyboardInterrupt:
+        print("Stopping ding")
+    except Exception:
+        traceback.print_exc(file=sys.stdout)
+    sys.exit(0)
     
 if __name__ == "__main__":
     ding()
