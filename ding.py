@@ -124,7 +124,6 @@ def decideModeAndPing(host='localhost'):
 def printStatus(host,sent,received):
     if operatingSystem=='windows':
         os.system('cls')
-        #sys.stdout.write("\033[K")
     percentage_received = (100*received/(sent if sent>0 else 1))
     print("\r","Pinging",host,":\n Received/sent ",received,"/",sent,'(',str(int(percentage_received)),'% )')
 
