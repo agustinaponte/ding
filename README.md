@@ -9,10 +9,10 @@ ding takes the host to be pinged as a positional argument
 `-h | --help`
 Shows help and exits
 
-# Examples:
+# Examples
 
 ```
-ding <host> | Pings a host and plays sound for every response
+ding <host> | Pings a host and plays a sound for every response
 ```
 
 # ToDo/Ideas
