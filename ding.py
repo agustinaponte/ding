@@ -12,47 +12,25 @@ import logging
 import time
 import argparse
 import traceback
-
-#____________.###+..+###-_______________
-#_____________+###..###+________________
-#_________.+######..#######.____________
-#________+#######.__.########___________
-#_______#####.__________.#####__________
-#_______###._______________+##__________
-#______+##.________________.##+_________
-#______###__________________###_________
-#______##.__________________.##.________
-#_____.##.__________________.##.________
-#_____###____________________###________
-#_____##+____________________+##________
-#____.##.____________________.##._______
-#____###______________________###_______
-#___.############################.______
-#+##################################+___
-###.__________##########___________##___
-#+###############.__.+##############+___
-#_____________##########________________
-#________________####___________________
+# Modules needed for installing 
+import ctypes
+import shutil
+import winreg
 
 
 ding_banner = """
-A ping utility with sound notifications.
-________________________________________
-_____█████__███_________________________
-____░░███__░░░__________________________
-__███████__████__████████____███████____
-_███░░███_░░███_░░███░░███__███░░███____
-░███_░███__░███__░███_░███_░███_░███____
-░███_░███__░███__░███_░███_░███_░███____
-░░████████_█████_████_█████░░███████____
-_░░░░░░░░_░░░░░_░░░░_░░░░░__░░░░░███____
-____________________________███_░███____
-___________________________░░██████_____
-____________________________░░░░░░______
-_____Like_ping,_but_with_better_sound___
-________________________________________
-
-
+-----------------------------------------
+  ______     _                   
+ |_   _ `.  (_)                  
+   | | `. \\  __   _ .--.   .--./) 
+   | |  | |[  | [ `.-. | / /'`\\ ; 
+  _| |_.' / | |  | | | | \\ \\._// 
+ |______.' [___][___||__].',__`  
+                         (( __)) 
+-----------------------------------------
+Ping utility with sound notifications.
+🔔🔔🔔 Version: {__version__} 🔔🔔🔔
+-----------------------------------------
 """
 operatingSystem = platform.system().lower()
 
@@ -69,11 +47,14 @@ def parseArgs():
     # Parse arguments
     parser = argparse.ArgumentParser(
         prog="ding",
-        description=ding_banner,
+        description=ding_banner.format(__version__=__version__),
+        formatter_class=argparse.RawDescriptionHelpFormatter,  # Preserve newlines in description
         epilog='Example: ding google.com')
+    
     parser.add_argument('host',nargs='?',help='Host to be pinged', metavar='<host>')
     parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], default='ERROR', help='Set the logging level')
     parser.add_argument('--version', action='version', version=f'ding {__version__}')
+    parser.add_argument('--install', action='store_true', help='Install ding to the system')
     args = parser.parse_args(sys.argv[1:])
     return args
 
@@ -86,6 +67,17 @@ logging.basicConfig(
     filemode='a'
     )  
     
+def is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+
+def get_system_path():
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", 0, winreg.KEY_READ) as key:
+        path, _ = winreg.QueryValueEx(key, "Path")
+        return path
+
 def playSound():
     # Play sound using motherboard speaker
     print('\a\b', end='')
@@ -155,6 +147,37 @@ def printLatencyChart(resultv):
 
 def ding():
     try:
+        if args.install:
+            logging.info("Starting installation process for ding")
+            if not is_admin():
+                logging.debug("Requesting admin privileges for installation")
+                ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+                sys.exit(0)
+            
+            target_dir = r"C:\Program Files\ding"
+            try:
+                if not os.path.exists(target_dir):
+                    os.makedirs(target_dir)
+                    logging.info("Created directory %s", target_dir)
+                
+                dest_path = os.path.join(target_dir, "ding.exe")
+                shutil.copy(sys.executable, dest_path)
+                logging.info("Copied %s to %s", sys.executable, dest_path)
+                
+                current_path = get_system_path()
+                path_list = current_path.split(";")
+                if target_dir not in path_list:
+                    new_path = current_path + ";" + target_dir
+                    subprocess.run(["setx", "PATH", new_path, "/m"], check=True)
+                    logging.info("Updated system PATH to include %s", target_dir)
+                
+                print("ding has been installed successfully. You can now run 'ding' from any command prompt.")
+                logging.info("Installation completed successfully")
+                sys.exit(0)
+            except Exception as e:
+                print(f"Installation failed: {str(e)}")
+                logging.error("Installation failed: %s", str(e))
+                sys.exit(1)
         cont=True
         sent=0
         received=0
