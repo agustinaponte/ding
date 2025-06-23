@@ -3,6 +3,7 @@
 Created on Mon Dec 18 22:46:04 2023
 @author: Agustin Aponte
 """
+__version__ = "0.0.1"
 import platform
 import os
 import subprocess
@@ -10,16 +11,7 @@ import sys
 import logging
 import time
 import argparse
-from pythonping import ping
 import traceback
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    filename='ding.log',
-    filemode='a'
-    )
-
 
 #____________.###+..+###-_______________
 #_____________+###..###+________________
@@ -35,15 +27,16 @@ logging.basicConfig(
 #_____##+____________________+##________
 #____.##.____________________.##._______
 #____###______________________###_______
-#___.############################.______________________________________________
-#+##################################+___________________________________________
-###.__________##########___________##___________________________________________
-#+###############.__.+##############+___________________________________________
-#_____________##########________________________________________________________
-#________________####___________________________________________________________
+#___.############################.______
+#+##################################+___
+###.__________##########___________##___
+#+###############.__.+##############+___
+#_____________##########________________
+#________________####___________________
 
 
 ding_banner = """
+A ping utility with sound notifications.
 ________________________________________
 _____█████__███_________________________
 ____░░███__░░░__________________________
@@ -62,7 +55,6 @@ ________________________________________
 
 """
 operatingSystem = platform.system().lower()
-count = 0
 
 class Ping_result:
     # Ping_result.result: 
@@ -80,9 +72,19 @@ def parseArgs():
         description=ding_banner,
         epilog='Example: ding google.com')
     parser.add_argument('host',nargs='?',help='Host to be pinged', metavar='<host>')
+    parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], default='ERROR', help='Set the logging level')
+    parser.add_argument('--version', action='version', version=f'ding {__version__}')
     args = parser.parse_args(sys.argv[1:])
     return args
-  
+
+args = parseArgs()
+
+logging.basicConfig(
+    level=getattr(logging, args.log_level),
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    filename='ding.log',
+    filemode='a'
+    )  
     
 def playSound():
     # Play sound using motherboard speaker
