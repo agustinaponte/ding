@@ -84,7 +84,6 @@ def playSound():
 
 def decideModeAndPing(host='localhost'):
     # Pings once, returns a Ping_result object
-           
     def windowsPing(host):
         def findResponseTime(ping_command_result):
             for subtext in ping_command_result.split(" "):
@@ -127,7 +126,7 @@ def printLatencyChart(resultv):
         if result[0]==0:
             print(result[1],"ms",end="")
             print(" "*(6-len(str(result[1]))),end="")
-            print("|","▇"*int((int(result[1])+10)/20),end="")
+            print("|","✓"*int((int(result[1])+10)/20),end="")
             print()
         if result[0]==1:
             print("No response")
@@ -141,43 +140,48 @@ def printLatencyChart(resultv):
     else:
         plotChart(resultv[-results_to_plot:])
 
+def installDing():
+    if not is_admin():
+        logging.debug("Requesting admin privileges for installation")
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+        sys.exit(0)
+
+    target_dir = r"C:\Program Files\ding"
+    try:
+        if not os.path.exists(target_dir):
+            os.makedirs(target_dir)
+            logging.info("Created directory %s", target_dir)
+        
+        dest_path = os.path.join(target_dir, "ding.exe")
+        shutil.copy(sys.executable, dest_path)
+        logging.info("Copied %s to %s", sys.executable, dest_path)
+        
+        current_path = get_system_path()
+        path_list = current_path.split(";")
+        if target_dir not in path_list:
+            new_path = current_path + ";" + target_dir
+            subprocess.run(["setx", "PATH", new_path, "/m"], check=True)
+            logging.info("Updated system PATH to include %s", target_dir)
+        
+        print("ding has been installed successfully. You can now run 'ding' from any command prompt.")
+        logging.info("Installation completed successfully")
+        sys.exit(0)
+    except Exception as e:
+        print(f"Installation failed: {str(e)}")
+        logging.error("Installation failed: %s", str(e))
+        sys.exit(1)
+
 #
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 #
 
 def ding():
     try:
+        logging.info("Starting installation process for ding")
+        
         if args.install:
-            logging.info("Starting installation process for ding")
-            if not is_admin():
-                logging.debug("Requesting admin privileges for installation")
-                ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
-                sys.exit(0)
-            
-            target_dir = r"C:\Program Files\ding"
-            try:
-                if not os.path.exists(target_dir):
-                    os.makedirs(target_dir)
-                    logging.info("Created directory %s", target_dir)
-                
-                dest_path = os.path.join(target_dir, "ding.exe")
-                shutil.copy(sys.executable, dest_path)
-                logging.info("Copied %s to %s", sys.executable, dest_path)
-                
-                current_path = get_system_path()
-                path_list = current_path.split(";")
-                if target_dir not in path_list:
-                    new_path = current_path + ";" + target_dir
-                    subprocess.run(["setx", "PATH", new_path, "/m"], check=True)
-                    logging.info("Updated system PATH to include %s", target_dir)
-                
-                print("ding has been installed successfully. You can now run 'ding' from any command prompt.")
-                logging.info("Installation completed successfully")
-                sys.exit(0)
-            except Exception as e:
-                print(f"Installation failed: {str(e)}")
-                logging.error("Installation failed: %s", str(e))
-                sys.exit(1)
+            installDing()
+
         cont=True
         sent=0
         received=0
