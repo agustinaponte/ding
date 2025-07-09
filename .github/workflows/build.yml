@@ -1,0 +1,32 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Solo lanza al hacer git push tag v0.0.2, etc.
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install pyinstaller
+        run: pip install pyinstaller
+
+      - name: Build EXE with pyinstaller
+        run: pyinstaller --onefile ding.py --name=ding
+
+      - name: Upload binary as release asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/ding.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
