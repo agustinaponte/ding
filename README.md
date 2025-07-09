@@ -9,27 +9,11 @@ ding takes the host to be pinged as a positional argument
 `-h | --help`
 Shows help and exits
 
+`--install`
+Copies the ding.exe to Program Files folder and adds it to system PATH
+
 # Examples
 
 ```
 ding <host> | Pings a host and plays a sound for every response
 ```
-
-# ToDo/Ideas
-Check for admin/root privileges
-
-If admin/root: Use lower level ping methods
-Else: Use each os's ping binary
-
-
-`-c <thisMany> | --count <thisMany>
-Sets the amount of ping requests to `<thisMany>` and exits when done. By default, ding pings indefinetely.
-
-` -l | --lost`
-Only plays a sound only if some responses are not received. Helpful to notice when a host is not reachable.
-
-Packet size: Accept an argument to specify packet size
-
-Show uptime and aditional information about the host
-
-Work with multiple hosts
