@@ -22,18 +22,37 @@ jobs:
 
       - name: Build EXE with PyInstaller
         run: pyinstaller --onefile ding.py --name=ding
+        shell: cmd
 
       - name: Extract version from tag
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+        run: |
+          echo "GITHUB_REF=$GITHUB_REF"
+          if not "%GITHUB_REF%"=="%GITHUB_REF:refs/tags/v=%" (
+            echo "VERSION=%GITHUB_REF:refs/tags/v=%" >> %GITHUB_ENV%
+          ) else (
+            echo "Error: No valid tag found in GITHUB_REF"
+            echo "VERSION=1.0.0" >> %GITHUB_ENV%
+            exit 1
+          )
+        shell: cmd
+
+      - name: Verify version
+        run: |
+          echo "VERSION=%VERSION%"
+          if "%VERSION%"=="" (
+            echo "Error: VERSION is empty"
+            exit 1
+          )
+        shell: cmd
 
       - name: Configure WiX Toolset
         run: |
           if exist "C:\Program Files (x86)\WiX Toolset v3.14\bin" (
             echo "WiX Toolset v3.14 already installed"
-            echo "C:\Program Files (x86)\WiX Toolset v3.14\bin" >> $GITHUB_PATH
+            echo "C:\Program Files (x86)\WiX Toolset v3.14\bin" >> %GITHUB_PATH%
           ) else (
             choco install wixtoolset --version=3.14.1 -y
-            echo "C:\Program Files (x86)\WiX Toolset v3.14\bin" >> $GITHUB_PATH
+            echo "C:\Program Files (x86)\WiX Toolset v3.14\bin" >> %GITHUB_PATH%
           )
         shell: cmd
 
@@ -42,7 +61,7 @@ jobs:
           if not exist dist\ding.ico (
             copy NUL dist\ding.ico
           )
-          echo " Ding Command Line Tool | MIT License" > license.rtf
+          echo "Ding Command Line Tool | MIT License" > license.rtf
         shell: cmd
 
       - name: Show directory structure
@@ -51,8 +70,17 @@ jobs:
 
       - name: Build MSI with WiX
         run: |
-          candle.exe -dVersion=${{ env.VERSION }} -dSourcePath=dist -out dist\ ding.wxs -v
-          light.exe -ext WixUIExtension -ext WixUtilExtension -b dist -out dist\ding_${{ env.VERSION }}.msi dist\ding.wixobj -v
+          dir D:\a\ding\ding
+          if not exist ding.wxs (
+            echo "Error: ding.wxs not found"
+            exit 1
+          )
+          candle.exe -dVersion=%VERSION% -dSourcePath=dist -out dist\ ding.wxs -v
+          if not exist dist\ding.wixobj (
+            echo "Error: ding.wixobj not generated"
+            exit 1
+          )
+          light.exe -ext WixUIExtension -ext WixUtilExtension -b dist -out dist\ding_%VERSION%.msi dist\ding.wixobj -v
         shell: cmd
 
       - name: List dist directory contents
@@ -60,14 +88,14 @@ jobs:
         shell: cmd
 
       - name: Rename EXE
-        run: move dist\ding.exe dist\ding-${{ env.VERSION }}-windows.exe
+        run: move dist\ding.exe dist\ding-%VERSION%-windows.exe
         shell: cmd
 
       - name: Upload artifacts
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            dist/ding-${{ env.VERSION }}-windows.exe
-            dist/ding_${{ env.VERSION }}.msi
+            dist/ding-%VERSION%-windows.exe
+            dist/ding_%VERSION%.msi
         env:
           GITHUB_TOKEN: ${{ secrets.DINGTOKEN }}

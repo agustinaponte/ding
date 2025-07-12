@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*" Name="Ding" Language="1033" Version="$(var.Version)"
-           Manufacturer="agustinaponte/ding" UpgradeCode="12345678-1234-1234-1234-1234567890ab">
+           Manufacturer="YourCompany" UpgradeCode="12345678-1234-1234-1234-1234567890ab">
     <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
     <MediaTemplate EmbedCab="yes" />
     
