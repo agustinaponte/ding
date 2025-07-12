@@ -80,9 +80,9 @@ jobs:
         run: dir dist
         shell: cmd
 
-      - name: Rename EXE
-        run: Rename-Item "dist\ding.exe" "dist\ding-$env:VERSION-windows.exe"
-        shell: pwsh
+      - name: Rename EXE with CMD
+        run: move dist\ding.exe dist\ding-${{ env.VERSION }}-windows.exe
+        shell: cmd
 
       - name: Upload artifacts
         uses: softprops/action-gh-release@v1
