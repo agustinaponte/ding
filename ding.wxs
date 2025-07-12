@@ -1,0 +1,78 @@
+name: Debug WiX Installer
+
+on:
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  debug-wix:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build EXE
+        run: pyinstaller --onefile ding.py --name=ding
+
+      - name: Extract version from tag
+        run: echo "VERSION=1.0.0" >> $GITHUB_ENV  # Test version
+
+      - name: Install WiX Toolset
+        uses: wix/setup-wix@v1
+
+      - name: Start debugging session
+        run: |
+          # Create minimal WiX file
+          @'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+            <Product Id="*" Name="DingTest" Language="1033" Version="1.0.0" 
+                     Manufacturer="Test" UpgradeCode="12345678-1234-1234-1234-1234567890ab">
+              <Package InstallerVersion="200" Compressed="yes"/>
+              <Directory Id="TARGETDIR" Name="SourceDir">
+                <Directory Id="ProgramFilesFolder">
+                  <Directory Id="INSTALLDIR" Name="DingTest">
+                    <Component Id="TestComponent">
+                      <File Source="dist\ding.exe"/>
+                    </Component>
+                  </Directory>
+                </Directory>
+              </Directory>
+              <Feature Id="TestFeature" Title="Test">
+                <ComponentRef Id="TestComponent"/>
+              </Feature>
+            </Product>
+          </Wix>
+          '@ > minimal.wxs
+          
+          # List files for verification
+          Write-Host "=== Current Directory Contents ==="
+          dir
+          Write-Host "=== dist Directory Contents ==="
+          dir dist
+          
+          # Run WiX commands manually
+          Write-Host "=== Running Candle ==="
+          candle.exe minimal.wxs -out dist\minimal.wixobj -v
+          
+          Write-Host "=== Running Light ==="
+          light.exe -out dist\minimal.msi dist\minimal.wixobj -v
+          
+          Write-Host "=== Final dist Contents ==="
+          dir dist
+          
+          # If MSI exists, verify it
+          if (Test-Path dist\minimal.msi) {
+            Write-Host "MSI created successfully!"
+            Write-Host "MSI Size: $((Get-Item dist\minimal.msi).Length) bytes"
+          } else {
+            Write-Host "MSI creation failed"
+            exit 1
+          }

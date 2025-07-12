@@ -1,16 +1,15 @@
-name: Build and Release
+name: Build and Release (Windows)
 
 on:
   push:
     tags:
-      - 'v*'  # Solo lanza al hacer git push tag v0.0.2, etc.
+      - 'v*'
 
 jobs:
   build-windows:
     runs-on: windows-latest
-
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -18,15 +17,50 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install pyinstaller
+      - name: Install PyInstaller
         run: pip install pyinstaller
 
-      - name: Build EXE with pyinstaller
+      - name: Build EXE with PyInstaller
         run: pyinstaller --onefile ding.py --name=ding
 
-      - name: Upload binary as release asset
+      - name: Extract version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+
+      # Fixed WiX installation using official action
+      - name: Install WiX Toolset
+        uses: wix/setup-wix@v1
+
+      # Create required files for WiX
+      - name: Prepare WiX assets
+        run: |
+          # Create dummy icon if not present
+          if not exist dist\ding.ico (
+            copy NUL dist\ding.ico
+          )
+          # Create license file
+          echo "Ding Command Line Tool | MIT License" > license.rtf
+
+      # Debugging: Show directory structure
+      - name: Show directory structure
+        run: tree /f
+
+      # Build MSI with detailed logging
+      - name: Build MSI with WiX
+        run: |
+          candle.exe -dVersion=${{ env.VERSION }} -dSourcePath=dist -out dist\ ding.wxs -v
+          light.exe -ext WixUIExtension -ext WixUtilExtension -b dist -out dist\ding_${{ env.VERSION }}.msi dist\ding.wixobj -v
+
+      - name: List dist directory contents
+        run: dir dist
+
+      - name: Rename EXE
+        run: move dist\ding.exe dist\ding-${{ env.VERSION }}-windows.exe
+
+      - name: Upload artifacts
         uses: softprops/action-gh-release@v1
         with:
-          files: dist/ding.exe
+          files: |
+            dist/ding-${{ env.VERSION }}-windows.exe
+            dist/ding_${{ env.VERSION }}.msi
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.DINGTOKEN }}

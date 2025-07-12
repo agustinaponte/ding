@@ -12,11 +12,12 @@ import logging
 import time
 import argparse
 import traceback
+import msvcrt
+
 # Modules needed for installing 
 import ctypes
 import shutil
 import winreg
-
 
 ding_banner = """
 -----------------------------------------
@@ -109,7 +110,7 @@ def decideModeAndPing(host='localhost'):
     #    return subprocess.call(command,stdout=subprocess.PIPE) == 0
 
     if operatingSystem=='windows': return windowsPing(host)
-    if operatingSystem =='linux': return linuxPing(host)
+    # if operatingSystem =='linux': return linuxPing(host)
     print("There is no ping command defined for this operating system ","(",operatingSystem,")")
     logging.CRITICAL("Operating System ",operatingSystem,"has not been specified in ding's ping function")
     sys.exit()
@@ -119,19 +120,20 @@ def printStatus(host,sent,received):
         os.system('cls')
     percentage_received = (100*received/(sent if sent>0 else 1))
     print("\r","Pinging",host,":\n Received/sent ",received,"/",sent,'(',str(int(percentage_received)),'% )')
+    print(" Latency:")
 
 def printLatencyChart(resultv):
     results_to_plot = 10
     def printLatencyLine(result):
         if result[0]==0:
-            print(result[1],"ms",end="")
+            print(" ",result[1],"ms",end="")
             print(" "*(6-len(str(result[1]))),end="")
-            print("|","✓"*int((int(result[1])+10)/20),end="")
+            print("|","█"*int((int(result[1])+10)/20),end="")
             print()
         if result[0]==1:
-            print("No response")
+            print(" No response")
         if result[0]==2:
-            print("Host not found")        
+            print(" Host not found")        
     def plotChart(resultv):
             for result in resultv:
                 printLatencyLine(result)        
@@ -178,7 +180,6 @@ def installDing():
 def ding():
     try:
         logging.info("Starting installation process for ding")
-        
         if args.install:
             installDing()
 
@@ -186,7 +187,8 @@ def ding():
         sent=0
         received=0
         resultv=[]
-        
+        silenced = False  # Silence default state
+                
         logging.debug("Parsing command line arguments... \n")
         argv=sys.argv
         argv = parseArgs()
@@ -198,7 +200,8 @@ def ding():
             sent+=1
             print(response.result)
             if response.result==0:
-                playSound()
+                if not silenced:
+                    playSound()
                 received+=1
             if response.result==2:
                 print("Host",argv.host,"not found")
@@ -206,7 +209,16 @@ def ding():
             resultv.append([response.result, response.latency])
             printStatus(argv.host,sent,received)
             printLatencyChart(resultv)
-            time.sleep(2)
+            print(" (S)ilence:", "ON" if silenced else "OFF")
+            wait_time = 2.0
+            check_interval = 0.1
+            steps = int(wait_time / check_interval)
+            for _ in range(steps):
+                if operatingSystem == 'windows' and msvcrt.kbhit():
+                    key = msvcrt.getch().decode('utf-8').lower()
+                    if key == 's':
+                        silenced = not silenced  # Toggle silence state
+                time.sleep(check_interval)
     except KeyboardInterrupt:
         print("Stopping ding")
     except Exception:
