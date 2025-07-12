@@ -97,7 +97,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            dist/ding-%VERSION%-windows.exe
-            dist/ding_%VERSION%.msi
+            dist/ding-${{ env.VERSION }}-windows.exe
+            dist/ding_${{ env.VERSION }}.msi
         env:
           GITHUB_TOKEN: ${{ secrets.DINGTOKEN }}
