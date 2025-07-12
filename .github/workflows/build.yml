@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - 'v*'
-      
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -26,10 +26,15 @@ jobs:
       - name: Extract version from tag
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
 
-      - name: Install WiX Toolset
+      - name: Configure WiX Toolset
         run: |
-          choco install wixtoolset --version=3.11.2 -y
-          echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" >> $GITHUB_PATH
+          if exist "C:\Program Files (x86)\WiX Toolset v3.14\bin" (
+            echo "WiX Toolset v3.14 already installed"
+            echo "C:\Program Files (x86)\WiX Toolset v3.14\bin" >> $GITHUB_PATH
+          ) else (
+            choco install wixtoolset --version=3.14.1 -y
+            echo "C:\Program Files (x86)\WiX Toolset v3.14\bin" >> $GITHUB_PATH
+          )
         shell: cmd
 
       - name: Prepare WiX assets
