@@ -38,15 +38,6 @@ jobs:
           }
         shell: pwsh
 
-      - name: Verify version
-        run: |
-          echo "VERSION=%VERSION%"
-          if "%VERSION%"=="" (
-            echo "Error: VERSION is empty"
-            exit 1
-          )
-        shell: cmd
-
       - name: Configure WiX Toolset
         run: |
           if exist "C:\Program Files (x86)\WiX Toolset v3.14\bin" (
@@ -90,8 +81,8 @@ jobs:
         shell: cmd
 
       - name: Rename EXE
-        run: move dist\ding.exe dist\ding-%VERSION%-windows.exe
-        shell: cmd
+        run: Rename-Item "dist\ding.exe" "dist\ding-$env:VERSION-windows.exe"
+        shell: pwsh
 
       - name: Upload artifacts
         uses: softprops/action-gh-release@v1
@@ -101,3 +92,4 @@ jobs:
             dist/ding_${{ env.VERSION }}.msi
         env:
           GITHUB_TOKEN: ${{ secrets.DINGTOKEN }}
+
