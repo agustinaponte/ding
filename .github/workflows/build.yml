@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - 'v*'
-
+      
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -26,35 +26,37 @@ jobs:
       - name: Extract version from tag
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
 
-      # Fixed WiX installation using official action
       - name: Install WiX Toolset
-        uses: wix/setup-wix@v1
+        run: |
+          choco install wixtoolset --version=3.11.2 -y
+          echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" >> $GITHUB_PATH
+        shell: cmd
 
-      # Create required files for WiX
       - name: Prepare WiX assets
         run: |
-          # Create dummy icon if not present
           if not exist dist\ding.ico (
             copy NUL dist\ding.ico
           )
-          # Create license file
-          echo "Ding Command Line Tool | MIT License" > license.rtf
+          echo " Ding Command Line Tool | MIT License" > license.rtf
+        shell: cmd
 
-      # Debugging: Show directory structure
       - name: Show directory structure
         run: tree /f
+        shell: cmd
 
-      # Build MSI with detailed logging
       - name: Build MSI with WiX
         run: |
           candle.exe -dVersion=${{ env.VERSION }} -dSourcePath=dist -out dist\ ding.wxs -v
           light.exe -ext WixUIExtension -ext WixUtilExtension -b dist -out dist\ding_${{ env.VERSION }}.msi dist\ding.wixobj -v
+        shell: cmd
 
       - name: List dist directory contents
         run: dir dist
+        shell: cmd
 
       - name: Rename EXE
         run: move dist\ding.exe dist\ding-${{ env.VERSION }}-windows.exe
+        shell: cmd
 
       - name: Upload artifacts
         uses: softprops/action-gh-release@v1
