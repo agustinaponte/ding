@@ -9,9 +9,6 @@ ding takes the host to be pinged as a positional argument
 `-h | --help`
 Shows help and exits
 
-`--install`
-Copies the ding.exe to Program Files folder and adds it to system PATH
-
 # Examples
 
 ```
