@@ -52,17 +52,14 @@ def parseArgs():
     parser.add_argument('host',nargs='?',help='Host to be pinged', metavar='<host>')
     parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], default='ERROR', help='Set the logging level')
     parser.add_argument('--version', action='version', version=f'ding {__version__}')
-    args = parser.parse_args(sys.argv[1:])
-    return args
+    argv = parser.parse_args(sys.argv[1:])
+    
+    if argv.host is None:
+        parser.print_help()
+        sys.exit(1)
+    return argv
 
-args = parseArgs()
 
-logging.basicConfig(
-    level=getattr(logging, args.log_level),
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    filename='ding.log',
-    filemode='a'
-    )  
     
 def is_admin():
     try:
@@ -139,31 +136,36 @@ def printLatencyChart(resultv):
 
 def ding():
     try:
-        cont=True
-        sent=0
-        received=0
-        resultv=[]
+        cont = True
+        sent = 0
+        received = 0
+        resultv = []
         silenced = False  # Silence default state
                 
-        logging.debug("Parsing command line arguments... \n")
-        argv=sys.argv
         argv = parseArgs()
+        logging.debug("Parsing command line arguments... \n")
         logging.debug("Done")
-        
+        logging.basicConfig(
+            level=getattr(logging, argv.log_level),
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            filename='ding.log',
+            filemode='a'
+            )  
+
         logging.debug("Starting main loop...")
-        while cont == True:
+        while cont:
             response = decideModeAndPing(argv.host)
-            sent+=1
+            sent += 1
             print(response.result)
-            if response.result==0:
+            if response.result == 0:
                 if not silenced:
                     playSound()
-                received+=1
-            if response.result==2:
-                print("Host",argv.host,"not found")
+                received += 1
+            if response.result == 2:
+                print("Host", argv.host, "not found")
 
             resultv.append([response.result, response.latency])
-            printStatus(argv.host,sent,received)
+            printStatus(argv.host, sent, received)
             printLatencyChart(resultv)
             print(" (S)ilence:", "ON" if silenced else "OFF")
             wait_time = 2.0
@@ -180,6 +182,6 @@ def ding():
     except Exception:
         traceback.print_exc(file=sys.stdout)
     sys.exit(0)
-    
+
 if __name__ == "__main__":
     ding()
