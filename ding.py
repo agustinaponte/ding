@@ -14,9 +14,7 @@ import argparse
 import traceback
 import msvcrt
 
-# Modules needed for installing 
 import ctypes
-import shutil
 import winreg
 
 ding_banner = """
@@ -55,7 +53,6 @@ def parseArgs():
     parser.add_argument('host',nargs='?',help='Host to be pinged', metavar='<host>')
     parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], default='ERROR', help='Set the logging level')
     parser.add_argument('--version', action='version', version=f'ding {__version__}')
-    parser.add_argument('--install', action='store_true', help='Install ding to the system')
     args = parser.parse_args(sys.argv[1:])
     return args
 
@@ -142,47 +139,12 @@ def printLatencyChart(resultv):
     else:
         plotChart(resultv[-results_to_plot:])
 
-def installDing():
-    if not is_admin():
-        logging.debug("Requesting admin privileges for installation")
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
-        sys.exit(0)
-
-    target_dir = r"C:\Program Files\ding"
-    try:
-        if not os.path.exists(target_dir):
-            os.makedirs(target_dir)
-            logging.info("Created directory %s", target_dir)
-        
-        dest_path = os.path.join(target_dir, "ding.exe")
-        shutil.copy(sys.executable, dest_path)
-        logging.info("Copied %s to %s", sys.executable, dest_path)
-        
-        current_path = get_system_path()
-        path_list = current_path.split(";")
-        if target_dir not in path_list:
-            new_path = current_path + ";" + target_dir
-            subprocess.run(["setx", "PATH", new_path, "/m"], check=True)
-            logging.info("Updated system PATH to include %s", target_dir)
-        
-        print("ding has been installed successfully. You can now run 'ding' from any command prompt.")
-        logging.info("Installation completed successfully")
-        sys.exit(0)
-    except Exception as e:
-        print(f"Installation failed: {str(e)}")
-        logging.error("Installation failed: %s", str(e))
-        sys.exit(1)
-
 #
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 #
 
 def ding():
     try:
-        logging.info("Starting installation process for ding")
-        if args.install:
-            installDing()
-
         cont=True
         sent=0
         received=0
