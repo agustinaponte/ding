@@ -43,7 +43,6 @@ class Ping_result:
         self.latency = latency
 
 def parseArgs():
-    # Parse arguments
     parser = argparse.ArgumentParser(
         prog="ding",
         description=ding_banner.format(__version__=__version__),
@@ -100,11 +99,6 @@ def decideModeAndPing(host='localhost'):
         if "host" in win_ping_result: result = 2
         latency = findResponseTime(win_ping_result)
         return Ping_result(result,latency)
-    
-    #def linuxPing(host):
-    #    param = '-c'
-    #    command = ['ping', param, '1', host]
-    #    return subprocess.call(command,stdout=subprocess.PIPE) == 0
 
     if operatingSystem=='windows': return windowsPing(host)
     # if operatingSystem =='linux': return linuxPing(host)
@@ -179,7 +173,7 @@ def ding():
                 if operatingSystem == 'windows' and msvcrt.kbhit():
                     key = msvcrt.getch().decode('utf-8').lower()
                     if key == 's':
-                        silenced = not silenced  # Toggle silence state
+                        silenced = not silenced
                 time.sleep(check_interval)
     except KeyboardInterrupt:
         print("Stopping ding")
