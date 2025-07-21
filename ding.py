@@ -13,9 +13,9 @@ import time
 import argparse
 import traceback
 import msvcrt
-
 import ctypes
 import winreg
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 ding_banner = """
 -----------------------------------------
@@ -34,33 +34,35 @@ Ping utility with sound notifications.
 operatingSystem = platform.system().lower()
 
 class Ping_result:
-    # Ping_result.result: 
-    # 0 if host responds
-    # 1 if host does not respond
-    # 2 if host was not found
-    def __init__(self, result, latency):
+    def __init__(self, result, latency, host):
         self.result = result
         self.latency = latency
+        self.host = host  # Track host for multi-host output
 
 def parseArgs():
     parser = argparse.ArgumentParser(
         prog="ding",
         description=ding_banner.format(__version__=__version__),
-        formatter_class=argparse.RawDescriptionHelpFormatter,  # Preserve newlines in description
-        epilog='Example: ding google.com')
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Example: ding google.com,example.com or ding google.com example.com')
     
-    parser.add_argument('host',nargs='?',help='Host to be pinged', metavar='<host>')
+    parser.add_argument('hosts', nargs='+', help='Hosts to be pinged (space-separated or comma-separated)', metavar='<host>')
     parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], default='ERROR', help='Set the logging level')
     parser.add_argument('--version', action='version', version=f'ding {__version__}')
     argv = parser.parse_args(sys.argv[1:])
     
-    if argv.host is None:
+    # Handle comma-separated or space-separated hosts
+    hosts = []
+    for host in argv.hosts:
+        hosts.extend(host.split(','))
+    hosts = [h.strip() for h in hosts if h.strip()]
+    
+    if not hosts:
         parser.print_help()
         sys.exit(1)
+    argv.hosts = hosts
     return argv
 
-
-    
 def is_admin():
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
@@ -73,101 +75,115 @@ def get_system_path():
         return path
 
 def playSound():
-    # Play sound using motherboard speaker
     print('\a\b', end='')
 
 def decideModeAndPing(host='localhost'):
-    # Pings once, returns a Ping_result object
     def windowsPing(host):
         def findResponseTime(ping_command_result):
             for subtext in ping_command_result.split(" "):
                 if 'ms' in subtext:
                     latency = "".join(char for char in subtext if char.isdecimal())
-                    return latency
+                    return latency if latency else None
         param = '-n'
         command = ['ping', param, '1', host]
-        logging.debug("Running Windows ping command...")
-        win_ping = subprocess.run(command, capture_output = True, text = True)
-        win_ping_result = win_ping.stdout
-        win_ping_errors = win_ping.stderr
-        if not (win_ping_errors is None): logging.debug(win_ping_errors)
-        if "(0%" in win_ping_result: result = 0
-        if "(100%" in win_ping_result: result = 1
-        if "host" in win_ping_result: result = 2
-        latency = findResponseTime(win_ping_result)
-        return Ping_result(result,latency)
+        logging.debug(f"Running Windows ping command for {host}...")
+        try:
+            win_ping = subprocess.run(command, capture_output=True, text=True, timeout=5)
+            win_ping_result = win_ping.stdout
+            win_ping_errors = win_ping.stderr
+            if win_ping_errors:
+                logging.debug(win_ping_errors)
+            if "(0%" in win_ping_result:
+                result = 0
+            elif "(100%" in win_ping_result:
+                result = 1
+            elif "host" in win_ping_result.lower():
+                result = 2
+            else:
+                result = 1  # Default to no response if unclear
+            latency = findResponseTime(win_ping_result)
+            return Ping_result(result, latency, host)
+        except subprocess.TimeoutExpired:
+            logging.debug(f"Ping timeout for {host}")
+            return Ping_result(1, None, host)
+        except Exception as e:
+            logging.error(f"Error pinging {host}: {e}")
+            return Ping_result(2, None, host)
 
-    if operatingSystem=='windows': return windowsPing(host)
-    # if operatingSystem =='linux': return linuxPing(host)
-    print("There is no ping command defined for this operating system ","(",operatingSystem,")")
-    logging.CRITICAL("Operating System ",operatingSystem,"has not been specified in ding's ping function")
-    sys.exit()
+    if operatingSystem == 'windows':
+        return windowsPing(host)
+    print(f"No ping command defined for OS: {operatingSystem}")
+    logging.critical(f"OS {operatingSystem} not supported in ding's ping function")
+    sys.exit(1)
 
-def printStatus(host,sent,received):
-    if operatingSystem=='windows':
+def printStatus(host_stats):
+    if operatingSystem == 'windows':
         os.system('cls')
-    percentage_received = (100*received/(sent if sent>0 else 1))
-    print("\r","Pinging",host,":\n Received/sent ",received,"/",sent,'(',str(int(percentage_received)),'% )')
-    print(" Latency:")
+    for host, stats in host_stats.items():
+        sent = stats['sent']
+        received = stats['received']
+        percentage_received = (100 * received / (sent if sent > 0 else 1))
+        print(f"\rPinging {host}:\n Received/sent {received}/{sent} ({int(percentage_received)}%)")
+        printLatencyChart(stats['results'], host)
+    print(f" (S)ilence: {'ON' if stats['silenced'] else 'OFF'}\n")
 
-def printLatencyChart(resultv):
-    results_to_plot = 10
+def printLatencyChart(resultv, host):
+    results_to_plot = 5
     def printLatencyLine(result):
-        if result[0]==0:
-            print(" ",result[1],"ms",end="")
-            print(" "*(6-len(str(result[1]))),end="")
-            print("|","█"*int((int(result[1])+10)/20),end="")
+        if result.result == 0 and result.latency:
+            print(f" {result.latency}ms", end="")
+            print(" " * (6 - len(str(result.latency))), end="")
+            print("|", "█" * int((int(result.latency) + 10) / 20), end="")
             print()
-        if result[0]==1:
+        elif result.result == 1:
             print(" No response")
-        if result[0]==2:
-            print(" Host not found")        
-    def plotChart(resultv):
-            for result in resultv:
-                printLatencyLine(result)        
-    if len(resultv)<results_to_plot:
-        plotChart(resultv)
+        elif result.result == 2:
+            print(" Host not found")
+    
+    print(f" Latency for {host}:")
+    if len(resultv) < results_to_plot:
+        for result in resultv:
+            printLatencyLine(result)
     else:
-        plotChart(resultv[-results_to_plot:])
-
-#
-#++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-#
+        for result in resultv[-results_to_plot:]:
+            printLatencyLine(result)
 
 def ding():
     try:
         cont = True
-        sent = 0
-        received = 0
-        resultv = []
-        silenced = False  # Silence default state
-                
+        host_stats = {}
         argv = parseArgs()
-        logging.debug("Parsing command line arguments... \n")
+        logging.debug("Parsing command line arguments...")
         logging.debug("Done")
         logging.basicConfig(
             level=getattr(logging, argv.log_level),
             format="%(asctime)s - %(levelname)s - %(message)s",
             filename='ding.log',
             filemode='a'
-            )  
+        )
+
+        # Initialize stats for each host
+        for host in argv.hosts:
+            host_stats[host] = {'sent': 0, 'received': 0, 'results': [], 'silenced': False}
 
         logging.debug("Starting main loop...")
         while cont:
-            response = decideModeAndPing(argv.host)
-            sent += 1
-            print(response.result)
-            if response.result == 0:
-                if not silenced:
-                    playSound()
-                received += 1
-            if response.result == 2:
-                print("Host", argv.host, "not found")
+            # Ping all hosts concurrently
+            with ThreadPoolExecutor(max_workers=len(argv.hosts)) as executor:
+                future_to_host = {executor.submit(decideModeAndPing, host): host for host in argv.hosts}
+                for future in as_completed(future_to_host):
+                    host = future_to_host[future]
+                    response = future.result()
+                    host_stats[host]['sent'] += 1
+                    if response.result == 0 and response.latency:
+                        if not host_stats[host]['silenced']:
+                            playSound()
+                        host_stats[host]['received'] += 1
+                    if response.result == 2:
+                        print(f"Host {host} not found")
+                    host_stats[host]['results'].append(response)
 
-            resultv.append([response.result, response.latency])
-            printStatus(argv.host, sent, received)
-            printLatencyChart(resultv)
-            print(" (S)ilence:", "ON" if silenced else "OFF")
+            printStatus(host_stats)
             wait_time = 2.0
             check_interval = 0.1
             steps = int(wait_time / check_interval)
@@ -175,7 +191,9 @@ def ding():
                 if operatingSystem == 'windows' and msvcrt.kbhit():
                     key = msvcrt.getch().decode('utf-8').lower()
                     if key == 's':
-                        silenced = not silenced
+                        # Toggle silence for all hosts (or modify to target specific hosts)
+                        for host in host_stats:
+                            host_stats[host]['silenced'] = not host_stats[host]['silenced']
                 time.sleep(check_interval)
     except KeyboardInterrupt:
         print("Stopping ding")
