@@ -302,17 +302,21 @@ def ding():
     sys.exit(0)
 
 if __name__ == "__main__":
+    # Auto-elevate if not admin
     if not is_admin():
         print("Requesting admin privileges...")
+
+        # Re-launch the script with admin rights
         params = " ".join([f'"{arg}"' for arg in sys.argv[1:]])
         ctypes.windll.shell32.ShellExecuteW(
             None,
-            "runas",
-            sys.executable,
+            "runas",                                # triggers UAC prompt
+            sys.executable,                         # python.exe
             f'"{sys.argv[0]}" {params}',
             None,
             1
         )
-        sys.exit(0)
+        sys.exit(0)  # Exit the non-admin process
 
+    # Now runs as admin
     ding()
