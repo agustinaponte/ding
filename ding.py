@@ -16,6 +16,14 @@ import msvcrt
 import ctypes
 import winreg
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import socket
+import struct
+import ctypes.wintypes as wintypes
+
+# Load iphlpapi
+iphlpapi = ctypes.WinDLL('iphlpapi')
+kernel32 = ctypes.WinDLL('kernel32')
+
 
 ding_banner = """
 -----------------------------------------
@@ -32,6 +40,67 @@ Ping utility with sound notifications.
 -----------------------------------------
 """
 operatingSystem = platform.system().lower()
+
+# Helper to format Windows error codes
+def _format_win_error(err):
+    buf = ctypes.create_unicode_buffer(512)
+    kernel32.FormatMessageW(
+        0x00001000,  # FORMAT_MESSAGE_FROM_SYSTEM
+        None,
+        err,
+        0,
+        buf,
+        len(buf),
+        None
+    )
+    return buf.value.strip()
+
+# Structures for ICMP
+class IP_OPTION_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("Ttl", ctypes.c_ubyte),
+        ("Tos", ctypes.c_ubyte),
+        ("Flags", ctypes.c_ubyte),
+        ("OptionsSize", ctypes.c_ubyte),
+        ("OptionsData", ctypes.c_void_p)
+    ]
+
+class ICMP_ECHO_REPLY(ctypes.Structure):
+    _fields_ = [
+        ("Address", ctypes.c_uint32),
+        ("Status", ctypes.c_uint32),
+        ("RoundTripTime", ctypes.c_uint32),
+        ("DataSize", ctypes.c_ushort),
+        ("Reserved", ctypes.c_ushort),
+        ("Data", ctypes.c_void_p),
+        ("Options", IP_OPTION_INFORMATION)
+    ]
+
+# Icmp* prototypes
+IcmpCreateFile = iphlpapi.IcmpCreateFile
+IcmpCreateFile.restype = wintypes.HANDLE
+IcmpCreateFile.argtypes = []
+
+IcmpCloseHandle = iphlpapi.IcmpCloseHandle
+IcmpCloseHandle.restype = wintypes.BOOL
+IcmpCloseHandle.argtypes = [wintypes.HANDLE]
+
+IcmpSendEcho2 = iphlpapi.IcmpSendEcho2
+IcmpSendEcho2.restype = wintypes.DWORD
+IcmpSendEcho2.argtypes = [
+    wintypes.HANDLE,     # IcmpHandle
+    wintypes.HANDLE,     # Event (can be NULL)
+    ctypes.c_void_p,     # ApcRoutine (can be NULL)
+    ctypes.c_void_p,     # ApcContext (can be NULL)
+    wintypes.DWORD,      # DestinationAddress
+    ctypes.c_void_p,     # RequestData pointer
+    wintypes.WORD,       # RequestSize
+    ctypes.POINTER(IP_OPTION_INFORMATION),  # RequestOptions
+    ctypes.c_void_p,     # ReplyBuffer pointer
+    wintypes.DWORD,      # ReplySize
+    wintypes.DWORD       # Timeout
+]
+
 
 class Ping_result:
     def __init__(self, result, latency, host):
@@ -79,36 +148,67 @@ def playSound():
 
 def decideModeAndPing(host='localhost'):
     def windowsPing(host):
-        def findResponseTime(ping_command_result):
-            for subtext in ping_command_result.split(" "):
-                if 'ms' in subtext:
-                    latency = "".join(char for char in subtext if char.isdecimal())
-                    return latency if latency else None
-        param = '-n'
-        command = ['ping', param, '1', host]
-        logging.debug(f"Running Windows ping command for {host}...")
         try:
-            win_ping = subprocess.run(command, capture_output=True, text=True, timeout=5)
-            win_ping_result = win_ping.stdout
-            win_ping_errors = win_ping.stderr
-            if win_ping_errors:
-                logging.debug(win_ping_errors)
-            if "(0%" in win_ping_result:
-                result = 0
-            elif "(100%" in win_ping_result:
-                result = 1
-            elif "host" in win_ping_result.lower():
-                result = 2
-            else:
-                result = 1  # Default to no response if unclear
-            latency = findResponseTime(win_ping_result)
-            return Ping_result(result, latency, host)
-        except subprocess.TimeoutExpired:
-            logging.debug(f"Ping timeout for {host}")
+            # Resolve host
+            ip = socket.gethostbyname(host)
+            packed = socket.inet_aton(ip)
+            ip_addr = struct.unpack("<I", packed)[0]  # little-endian DWORD for Windows
+
+            # Open ICMP handle
+            handle = IcmpCreateFile()
+            if handle == wintypes.HANDLE(-1).value or handle is None:
+                err = ctypes.GetLastError()
+                logging.error(f"IcmpCreateFile failed: {err}: {_format_win_error(err)}")
+                return Ping_result(2, None, host)
+
+            # Payload (must persist during call!)
+            data = b'1234567890ABCDEF'
+            data_buf = ctypes.create_string_buffer(data)
+            data_len = len(data)
+
+            # Options
+            ip_opts = IP_OPTION_INFORMATION(Ttl=128, Tos=0, Flags=0, OptionsSize=0, OptionsData=None)
+
+            # Reply buffer: one reply structure + payload
+            reply_size = ctypes.sizeof(ICMP_ECHO_REPLY) + data_len + 8
+            reply_buf = ctypes.create_string_buffer(reply_size)
+
+            # Call synchronous IcmpSendEcho2 (Event & APC = NULL)
+            timeout_ms = 2000
+            res = IcmpSendEcho2(
+                handle,
+                None, None, None,                 # no async
+                ip_addr,
+                ctypes.byref(data_buf),
+                data_len,
+                ctypes.byref(ip_opts),
+                ctypes.byref(reply_buf),
+                reply_size,
+                timeout_ms
+            )
+
+            if res > 0:
+                # Extract first reply
+                reply = ctypes.cast(reply_buf, ctypes.POINTER(ICMP_ECHO_REPLY))[0]
+                if reply.Status == 0:  # IP_SUCCESS
+                    return Ping_result(0, str(reply.RoundTripTime), host)
+                else:
+                    return Ping_result(1, None, host)
+
+            # 0 = timeout or error
             return Ping_result(1, None, host)
-        except Exception as e:
-            logging.error(f"Error pinging {host}: {e}")
+
+        except socket.gaierror:
             return Ping_result(2, None, host)
+        except Exception as e:
+            logging.exception(f"Unexpected error: {e}")
+            return Ping_result(2, None, host)
+        finally:
+            try:
+                if handle:
+                    IcmpCloseHandle(handle)
+            except:
+                pass
 
     if operatingSystem == 'windows':
         return windowsPing(host)
@@ -202,4 +302,17 @@ def ding():
     sys.exit(0)
 
 if __name__ == "__main__":
+    if not is_admin():
+        print("Requesting admin privileges...")
+        params = " ".join([f'"{arg}"' for arg in sys.argv[1:]])
+        ctypes.windll.shell32.ShellExecuteW(
+            None,
+            "runas",
+            sys.executable,
+            f'"{sys.argv[0]}" {params}',
+            None,
+            1
+        )
+        sys.exit(0)
+
     ding()
