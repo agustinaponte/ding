@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import socket
 import struct
 import ctypes.wintypes as wintypes
+import shutil
 
 # Load iphlpapi
 iphlpapi = ctypes.WinDLL('iphlpapi')
@@ -40,6 +41,46 @@ Ping utility with sound notifications.
 -----------------------------------------
 """
 operatingSystem = platform.system().lower()
+
+def resize_terminal(width, height):
+    """Resize the Windows terminal window."""
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE = -11
+
+    # Set screen buffer size
+    buffer_size = wintypes._COORD(width, height)
+    kernel32.SetConsoleScreenBufferSize(handle, buffer_size)
+
+    # Set window size
+    rect = wintypes.SMALL_RECT(0, 0, width - 1, height - 1)
+    kernel32.SetConsoleWindowInfo(handle, True, ctypes.byref(rect))
+
+def choose_optimal_terminal_size(num_hosts, min_panel_width=24, base_height=20):
+    """
+    Compute optimal terminal width/height so hosts form a near-square matrix
+    with minimal wasted padding.
+    """
+
+    # Try to make rows and cols as close as possible
+    cols = int(num_hosts ** 0.5)
+    if cols * cols < num_hosts:
+        cols += 1
+
+    rows = (num_hosts + cols - 1) // cols
+
+    # Minimal width = columns * panel_width + spacing
+    width = cols * (min_panel_width + 2)
+
+    # Minimal height = rows * estimated panel height
+    est_panel_height = 10
+    height = rows * est_panel_height + 5
+
+    # Safety cap: Windows terminals break > 200x80 sometimes
+    width = min(width, 200)
+    height = min(height, 80)
+
+    return width, height
+
 
 # Helper to format Windows error codes
 def _format_win_error(err):
@@ -217,17 +258,110 @@ def decideModeAndPing(host='localhost'):
     sys.exit(1)
 
 def printStatus(host_stats):
+    # clear screen
     if operatingSystem == 'windows':
         os.system('cls')
-    for host, stats in host_stats.items():
-        print(f"[{host}]\n {stats['status_msg']}")
-        sent = stats['sent']
-        received = stats['received']
-        percentage_received = (100 * received / (sent if sent > 0 else 1))
-        print(f"\rReceived/sent {received}/{sent} ({int(percentage_received)}%)")
-        printLatencyChart(stats['results'], host)
-        print("---------------------------")
-    print(f" (S)ilence: {'ON' if stats['silenced'] else 'OFF'}\n")
+    else:
+        os.system('clear')
+
+    cols, rows = shutil.get_terminal_size()
+
+    hosts = list(host_stats.items())
+    if not hosts:
+        print("(S)ilence: OFF")
+        return
+
+    # Separador entre paneles (corto para evitar mucho espacio)
+    separator = "  "
+
+    # Decide un ancho mínimo razonable por panel
+    min_panel_width = 24
+
+    # Calculamos cuántos paneles intentamos poner por fila.
+    # Usamos un divisor prudente para no crear paneles enormes.
+    panels_per_row = max(1, min(len(hosts), cols // min_panel_width))
+
+    # Ancho efectivo por panel teniendo en cuenta el separador
+    panel_width = max(min_panel_width, cols // panels_per_row - len(separator))
+
+    # Procesamos por grupos (filas)
+    for row_start in range(0, len(hosts), panels_per_row):
+        row_hosts = hosts[row_start: row_start + panels_per_row]
+
+        # Renderizamos cada host del grupo a una lista de líneas (SIN padding final)
+        host_panels = []
+        for host, stats in row_hosts:
+            sent = stats['sent']
+            received = stats['received']
+            percentage_received = (100 * received / (sent if sent > 0 else 1))
+
+            lines = []
+            # Línea 0: nombre (truncate si es muy largo)
+            name = f"[{host}]"
+            if len(name) > panel_width:
+                name = name[:panel_width-3] + "..."
+            lines.append(name)
+
+            # Línea 1: status_msg (truncate si es necesario)
+            msg = stats.get('status_msg', "")
+            if len(msg) > panel_width:
+                msg = msg[:panel_width-3] + "..."
+            lines.append(msg)
+
+            # Línea 2: recibidos/enviados
+            lines.append(f"Rx/Tx {received}/{sent} ({int(percentage_received)}%)")
+
+            # Línea 3: encabezado latencia
+            lines.append("Latency:")
+
+            # Líneas siguientes: últimos 5 resultados (formateados)
+            recent = stats['results'][-5:]
+            latency_lines = []
+
+            for i in range(5):
+                if i < len(recent):
+                    r = recent[i]
+                    if r.result == 0 and r.latency:
+                        lat_str = f"{int(r.latency)}ms".rjust(4)
+                        bar_len = max(1, int((int(r.latency) + 10) / 20))
+                        bar = "█" * bar_len
+                        line = f"{lat_str} {bar}"
+                    elif r.result == 1:
+                        line = "No response"
+                    else:
+                        line = "Host not found"
+                else:
+                    line = ""  # <--- placeholder empty line to keep panel size fixed
+
+                # Truncate if too wide
+                if len(line) > panel_width:
+                    line = line[:panel_width-3] + "..."
+
+                latency_lines.append(line)
+
+            # Add the reserved lines to the panel
+            lines.extend(latency_lines)
+
+            host_panels.append(lines)
+
+        # Determinamos cuántas líneas tiene el panel más alto
+        max_lines = max(len(p) for p in host_panels)
+
+        # Imprimimos línea a línea, uniendo paneles con el separador corto
+        for i in range(max_lines):
+            parts = []
+            for p in host_panels:
+                part = p[i] if i < len(p) else ""
+                # Alineamos/paddamos a panel_width justo antes de unir
+                parts.append(part.ljust(panel_width))
+            print(separator.join(parts))
+
+        print("")  # línea en blanco entre filas de paneles
+
+    # Global status (silence)
+    any_host = next(iter(host_stats.values()))
+    print(f"(S)ilence: {'ON' if any_host['silenced'] else 'OFF'}")
+
 
 def printLatencyChart(resultv, host):
     results_to_plot = 5
@@ -252,11 +386,11 @@ def printLatencyChart(resultv, host):
 
 def format_duration(seconds):
     if seconds < 60:
-        return f"{int(seconds)} seconds"
+        return f"{int(seconds)} s"
     elif seconds < 3600:
-        return f"{int(seconds // 60)} minutes"
+        return f"{int(seconds // 60)} m"
     else:
-        return f"{int(seconds // 3600)} hours"
+        return f"{int(seconds // 3600)} h"
 
 
 def ding():
@@ -284,6 +418,11 @@ def ding():
                 'state_since': time.time(),
                 'status_msg': ""
                 }
+            
+        # --- Auto resize terminal based on number of hosts ---
+        if operatingSystem == 'windows':
+            width, height = choose_optimal_terminal_size(len(argv.hosts))
+            resize_terminal(width, height)
 
         logging.debug("Starting main loop...")
         while cont:
