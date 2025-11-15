@@ -220,11 +220,13 @@ def printStatus(host_stats):
     if operatingSystem == 'windows':
         os.system('cls')
     for host, stats in host_stats.items():
+        print(f"[{host}]\n {stats['status_msg']}")
         sent = stats['sent']
         received = stats['received']
         percentage_received = (100 * received / (sent if sent > 0 else 1))
-        print(f"\rPinging {host}:\n Received/sent {received}/{sent} ({int(percentage_received)}%)")
+        print(f"\rReceived/sent {received}/{sent} ({int(percentage_received)}%)")
         printLatencyChart(stats['results'], host)
+        print("---------------------------")
     print(f" (S)ilence: {'ON' if stats['silenced'] else 'OFF'}\n")
 
 def printLatencyChart(resultv, host):
@@ -248,6 +250,15 @@ def printLatencyChart(resultv, host):
         for result in resultv[-results_to_plot:]:
             printLatencyLine(result)
 
+def format_duration(seconds):
+    if seconds < 60:
+        return f"{int(seconds)} seconds"
+    elif seconds < 3600:
+        return f"{int(seconds // 60)} minutes"
+    else:
+        return f"{int(seconds // 3600)} hours"
+
+
 def ding():
     try:
         cont = True
@@ -264,7 +275,15 @@ def ding():
 
         # Initialize stats for each host
         for host in argv.hosts:
-            host_stats[host] = {'sent': 0, 'received': 0, 'results': [], 'silenced': False}
+            host_stats[host] = {
+                'sent': 0,
+                'received': 0,
+                'results': [],
+                'silenced': False,
+                'current_state': None,
+                'state_since': time.time(),
+                'status_msg': ""
+                }
 
         logging.debug("Starting main loop...")
         while cont:
@@ -274,14 +293,42 @@ def ding():
                 for future in as_completed(future_to_host):
                     host = future_to_host[future]
                     response = future.result()
+
                     host_stats[host]['sent'] += 1
+
                     if response.result == 0 and response.latency:
                         if not host_stats[host]['silenced']:
                             playSound()
                         host_stats[host]['received'] += 1
+
                     if response.result == 2:
                         print(f"Host {host} not found")
+
                     host_stats[host]['results'].append(response)
+
+                    # ------------------ NEW STATE TRACKING LOGIC ------------------
+                    new_state = "up" if (response.result == 0 and response.latency) else "down"
+                    old_state = host_stats[host]['current_state']
+                    now = time.time()
+
+                    if old_state is None:
+                        host_stats[host]['current_state'] = new_state
+                        host_stats[host]['state_since'] = now
+                    else:
+                        if new_state != old_state:
+                            host_stats[host]['current_state'] = new_state
+                            host_stats[host]['state_since'] = now
+
+                    duration = now - host_stats[host]['state_since']
+
+                    if old_state is None:
+                        msg = f"{new_state.upper()} for at least {format_duration(duration)}"
+                    elif new_state != old_state:
+                        msg = f"{new_state.upper()} for {format_duration(duration)}"
+                    else:
+                        msg = f"{new_state.upper()} for at least {format_duration(duration)}"
+
+                    host_stats[host]['status_msg'] = msg
 
             printStatus(host_stats)
             wait_time = 2.0
