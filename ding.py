@@ -158,13 +158,7 @@ def parseArgs():
     parser.add_argument('hosts', nargs='+', help='Hosts to be pinged (space-separated or comma-separated)', metavar='<host>')
     parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], default='ERROR', help='Set the logging level')
     parser.add_argument('--version', action='version', version=f'ding {__version__}')
-    parser.add_argument('--update', action='store_true', help='Check for updates and install the latest version')
     argv = parser.parse_args(sys.argv[1:])
-
-    if argv.update:
-        from updater import run_update_check
-        run_update_check(current_version=__version__)
-        sys.exit(0)
 
     # Handle comma-separated or space-separated hosts
     hosts = []
