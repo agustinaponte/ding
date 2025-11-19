@@ -1,0 +1,17 @@
+pyinstaller
+msicreator
+platform
+os
+sys
+logging
+time
+argparse
+traceback
+msvcrt
+ctypes
+winreg
+concurrent.futures
+socket
+struct
+ctypes.wintypes
+shutil
