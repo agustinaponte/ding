@@ -6,7 +6,6 @@ Created on Mon Dec 18 22:46:04 2023
 __version__ = "0.0.1"
 import platform
 import os
-import subprocess
 import sys
 import logging
 import time
@@ -176,7 +175,7 @@ def parseArgs():
 def is_admin():
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
+    except (AttributeError, OSError):
         return False
 
 def get_system_path():
@@ -248,7 +247,7 @@ def decideModeAndPing(host='localhost'):
             try:
                 if handle:
                     IcmpCloseHandle(handle)
-            except:
+            except (AttributeError, OSError):
                 pass
 
     if operatingSystem == 'windows':
