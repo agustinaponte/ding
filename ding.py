@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-"""                                                            
+"""
 Created on Mon Dec 18 22:46:04 2023
+Updated to add compact view with per-host notification modes
 @author: Agustin Aponte
 """
-__version__ = "0.0.2"
+__version__ = "0.0.3"
+
 import platform
 import os
 import sys
@@ -14,17 +16,22 @@ import traceback
 import msvcrt
 import ctypes
 import winreg
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 import socket
 import struct
 import ctypes.wintypes as wintypes
 import shutil
+import threading
 
 # Load iphlpapi
 iphlpapi = ctypes.WinDLL('iphlpapi')
 kernel32 = ctypes.WinDLL('kernel32')
 
+if os.name == "nt":
+    kernel32 = ctypes.windll.kernel32
+    kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
 
+# --- small helper banner (unchanged) ---
 ding_banner = """
 -----------------------------------------
   ______     _                   
@@ -41,6 +48,7 @@ Ping utility with sound notifications.
 """
 operatingSystem = platform.system().lower()
 
+# --- Terminal resize utilities (unchanged) ---
 def resize_terminal(width, height):
     """Resize the Windows terminal window."""
     kernel32 = ctypes.windll.kernel32
@@ -59,8 +67,6 @@ def choose_optimal_terminal_size(num_hosts, min_panel_width=24, base_height=20):
     Compute optimal terminal width/height so hosts form a near-square matrix
     with minimal wasted padding.
     """
-
-    # Try to make rows and cols as close as possible
     cols = int(num_hosts ** 0.5)
     if cols * cols < num_hosts:
         cols += 1
@@ -148,6 +154,7 @@ class Ping_result:
         self.latency = latency
         self.host = host  # Track host for multi-host output
 
+# --- Argument parser (unchanged) ---
 def parseArgs():
     parser = argparse.ArgumentParser(
         prog="ding",
@@ -183,11 +190,16 @@ def get_system_path():
         path, _ = winreg.QueryValueEx(key, "Path")
         return path
 
+# --- Sound: simple bell, kept as-is but callable from notifier thread ---
 def playSound():
-    print('\a\b', end='')
+    # Keep as minimal portable console bell for now
+    # If you later want to use winsound.PlaySound you can replace this function.
+    print('\a\b', end='', flush=True)
 
+# --- decideModeAndPing: unchanged logic, returns Ping_result ---
 def decideModeAndPing(host='localhost'):
     def windowsPing(host):
+        handle = None
         try:
             # Resolve host
             ip = socket.gethostbyname(host)
@@ -228,10 +240,14 @@ def decideModeAndPing(host='localhost'):
             )
 
             if res > 0:
-                # Extract first reply
                 reply = ctypes.cast(reply_buf, ctypes.POINTER(ICMP_ECHO_REPLY))[0]
                 if reply.Status == 0:  # IP_SUCCESS
-                    return Ping_result(0, str(reply.RoundTripTime), host)
+                    # convert RoundTripTime to a normal int
+                    try:
+                        rtt = int(reply.RoundTripTime)
+                    except Exception:
+                        rtt = None
+                    return Ping_result(0, rtt, host)
                 else:
                     return Ping_result(1, None, host)
 
@@ -256,133 +272,8 @@ def decideModeAndPing(host='localhost'):
     logging.critical(f"OS {operatingSystem} not supported in ding's ping function")
     sys.exit(1)
 
-def printStatus(host_stats):
-    # clear screen
-    if operatingSystem == 'windows':
-        os.system('cls')
-    else:
-        os.system('clear')
 
-    cols, rows = shutil.get_terminal_size()
-
-    hosts = list(host_stats.items())
-    if not hosts:
-        print("(S)ilence: OFF")
-        return
-
-    # Separador entre paneles (corto para evitar mucho espacio)
-    separator = "  "
-
-    # Decide un ancho mínimo razonable por panel
-    min_panel_width = 24
-
-    # Calculamos cuántos paneles intentamos poner por fila.
-    # Usamos un divisor prudente para no crear paneles enormes.
-    panels_per_row = max(1, min(len(hosts), cols // min_panel_width))
-
-    # Ancho efectivo por panel teniendo en cuenta el separador
-    panel_width = max(min_panel_width, cols // panels_per_row - len(separator))
-
-    # Procesamos por grupos (filas)
-    for row_start in range(0, len(hosts), panels_per_row):
-        row_hosts = hosts[row_start: row_start + panels_per_row]
-
-        # Renderizamos cada host del grupo a una lista de líneas (SIN padding final)
-        host_panels = []
-        for host, stats in row_hosts:
-            sent = stats['sent']
-            received = stats['received']
-            percentage_received = (100 * received / (sent if sent > 0 else 1))
-
-            lines = []
-            # Línea 0: nombre (truncate si es muy largo)
-            name = f"[{host}]"
-            if len(name) > panel_width:
-                name = name[:panel_width-3] + "..."
-            lines.append(name)
-
-            # Línea 1: status_msg (truncate si es necesario)
-            msg = stats.get('status_msg', "")
-            if len(msg) > panel_width:
-                msg = msg[:panel_width-3] + "..."
-            lines.append(msg)
-
-            # Línea 2: recibidos/enviados
-            lines.append(f"Rx/Tx {received}/{sent} ({int(percentage_received)}%)")
-
-            # Línea 3: encabezado latencia
-            lines.append("Latency:")
-
-            # Líneas siguientes: últimos 5 resultados (formateados)
-            recent = stats['results'][-5:]
-            latency_lines = []
-
-            for i in range(5):
-                if i < len(recent):
-                    r = recent[i]
-                    if r.result == 0 and r.latency:
-                        lat_str = f"{int(r.latency)}ms".rjust(4)
-                        bar_len = max(1, int((int(r.latency) + 10) / 20))
-                        bar = "█" * bar_len
-                        line = f"{lat_str} {bar}"
-                    elif r.result == 1:
-                        line = "No response"
-                    else:
-                        line = "Host not found"
-                else:
-                    line = ""  # <--- placeholder empty line to keep panel size fixed
-
-                # Truncate if too wide
-                if len(line) > panel_width:
-                    line = line[:panel_width-3] + "..."
-
-                latency_lines.append(line)
-
-            # Add the reserved lines to the panel
-            lines.extend(latency_lines)
-
-            host_panels.append(lines)
-
-        # Determinamos cuántas líneas tiene el panel más alto
-        max_lines = max(len(p) for p in host_panels)
-
-        # Imprimimos línea a línea, uniendo paneles con el separador corto
-        for i in range(max_lines):
-            parts = []
-            for p in host_panels:
-                part = p[i] if i < len(p) else ""
-                # Alineamos/paddamos a panel_width justo antes de unir
-                parts.append(part.ljust(panel_width))
-            print(separator.join(parts))
-
-        print("")  # línea en blanco entre filas de paneles
-
-    # Global status (silence)
-    any_host = next(iter(host_stats.values()))
-    print(f"(S)ilence: {'ON' if any_host['silenced'] else 'OFF'}")
-
-
-def printLatencyChart(resultv, host):
-    results_to_plot = 5
-    def printLatencyLine(result):
-        if result.result == 0 and result.latency:
-            print(f" {result.latency}ms", end="")
-            print(" " * (6 - len(str(result.latency))), end="")
-            print("|", "█" * int((int(result.latency) + 10) / 20), end="")
-            print()
-        elif result.result == 1:
-            print(" No response")
-        elif result.result == 2:
-            print(" Host not found")
-    
-    print(f" Latency for {host}:")
-    if len(resultv) < results_to_plot:
-        for result in resultv:
-            printLatencyLine(result)
-    else:
-        for result in resultv[-results_to_plot:]:
-            printLatencyLine(result)
-
+# --- utility helpers for display ---
 def format_duration(seconds):
     if seconds < 60:
         return f"{int(seconds)} s"
@@ -391,14 +282,135 @@ def format_duration(seconds):
     else:
         return f"{int(seconds // 3600)} h"
 
+# --- Evaluate whether a host is "alerting" according to its notify_mode ---
+# Modes:
+# 0 = no notification
+# 1 = notify when up   (alert while host is UP)
+# 2 = notify when down (alert while host is DOWN)
+# 3 = notify state change (alert for a short hold period after a change)
+ALERT_HOLD_SECONDS = 5.0  # how long mode 3 holds alert after a state change
 
+def evaluate_alert(stats, new_state, old_state):
+    """
+    Return True if this host should be considered 'alerting' right now.
+    For modes 1/2 we consider the instantaneous state (alert while in that state).
+    For mode 3 (state change), set alert for ALERT_HOLD_SECONDS after a change.
+    """
+    mode = stats.get('notify_mode', 3)
+
+    # mode 0: never alert
+    if mode == 0:
+        return False
+
+    # mode 1: alert while host is UP
+    if mode == 1:
+        return new_state == "up"
+
+    # mode 2: alert while host is DOWN
+    if mode == 2:
+        return new_state == "down"
+
+    # mode 3: state change -> keep alert True for ALERT_HOLD_SECONDS after change
+    if mode == 3:
+        changed = new_state != old_state
+        now_ts = time.time()
+        if changed:
+            # mark when alert started
+            stats['alert_since'] = now_ts
+            return True
+
+        alert_since = stats.get('alert_since')
+        if alert_since is None:
+            return False
+
+        if now_ts - alert_since <= ALERT_HOLD_SECONDS:
+            return True
+
+        # clear alert_since after hold expires
+        stats['alert_since'] = None
+        return False
+
+    return False
+
+# --- Compact view and legacy view printing ---
+# Colors (ANSI) - Windows 10+ terminals usually support these.
+ANSI_RESET = "\033[0m"
+ANSI_RED = "\033[91m"
+ANSI_GREEN = "\033[92m"
+ANSI_YELLOW = "\033[93m"
+ANSI_INVERT = "\033[7m"
+
+class NotifierThread(threading.Thread):
+    def __init__(self, host_stats, interval=1.5):
+        super().__init__(daemon=True)
+        self.host_stats = host_stats
+        self.interval = interval
+        self._stop_event = threading.Event()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def stopped(self):
+        return self._stop_event.is_set()
+
+    def any_alerting(self):
+        if getattr(self, 'global_silence', False):
+            return False
+        for s in self.host_stats.values():
+            if s.get('alerting'):
+                return True
+        return False
+
+    def run(self):
+        # Repeatedly play sound while any host is alerting
+        while not self.stopped():
+            if self.any_alerting():
+                try:
+                    playSound()
+                except Exception:
+                    pass
+                # wait small interval but break early if stopped
+                slept = 0.0
+                while slept < self.interval and not self.stopped():
+                    time.sleep(0.1)
+                    slept += 0.1
+            else:
+                # sleep a bit before checking again
+                time.sleep(0.2)
+
+def build_compact_view(hosts_order, stats, selected_index, global_silence):
+    lines = []
+    lines.append(
+        " DING - Real-time Ping Monitor     "
+        f"Silence: [{'ON ' if global_silence else 'OFF'}]     "
+        "TAB = toggle view • Q = quit • ↑↓/jk = select • 0-3 = mode"
+    )
+    lines.append("═" * 80)
+
+    modes = ["none", "on up", "on down", "on change"]
+    for i, host in enumerate(hosts_order):
+        s = stats[host]
+        sel = ">" if i == selected_index else " "
+        state = (s['current_state'] or "?").upper()
+        col = ANSI_GREEN if state == "UP" else ANSI_RED if state == "DOWN" else ANSI_YELLOW
+        lat = f"{s['latency'] or '-':>4}ms" if s['latency'] is not None else "  -  "
+        uptime = format_duration(time.time() - s['state_since']) if s.get('state_since') else "-"
+        mode = modes[s.get('notify_mode', 3)]
+        alert = ANSI_INVERT + " ALERT " + ANSI_RESET if s.get('alerting') else ""
+
+        lines.append(f"{sel} {host:<30} {col}{state:<4}{ANSI_RESET} {lat}  {uptime:<8}  {mode:<12} {alert}")
+
+    lines.append("\n")
+    return "\n".join(lines)
+
+def build_legacy_view(host_stats, global_silence):
+    # Keep your original panel layout if desired — or simplify
+    # For now, just fall back to compact when not used
+    return build_compact_view(list(host_stats.keys()), host_stats, 0, global_silence)
+    
 def ding():
     try:
-        cont = True
-        host_stats = {}
         argv = parseArgs()
-        logging.debug("Parsing command line arguments...")
-        logging.debug("Done")
         logging.basicConfig(
             level=getattr(logging, argv.log_level),
             format="%(asctime)s - %(levelname)s - %(message)s",
@@ -406,85 +418,157 @@ def ding():
             filemode='a'
         )
 
-        # Initialize stats for each host
-        for host in argv.hosts:
+        # Hide cursor
+        sys.stdout.write("\033[?25l")
+        sys.stdout.flush()
+
+        hosts_order = list(argv.hosts)
+        host_stats = {}
+        global_silence = False
+
+        now0 = time.time()
+        for host in hosts_order:
             host_stats[host] = {
                 'sent': 0,
                 'received': 0,
                 'results': [],
-                'silenced': False,
+                # removed per-host 'silenced'
                 'current_state': None,
-                'state_since': time.time(),
-                'status_msg': ""
-                }
-            
-        # --- Auto resize terminal based on number of hosts ---
-        if operatingSystem == 'windows':
-            width, height = choose_optimal_terminal_size(len(argv.hosts))
-            resize_terminal(width, height)
+                'state_since': now0,
+                'status_msg': "",
+                'notify_mode': 3,
+                'alerting': False,
+                'alert_since': None,
+                'latency': None,
+            }
 
-        logging.debug("Starting main loop...")
-        while cont:
-            # Ping all hosts concurrently
-            with ThreadPoolExecutor(max_workers=len(argv.hosts)) as executor:
-                future_to_host = {executor.submit(decideModeAndPing, host): host for host in argv.hosts}
-                for future in as_completed(future_to_host):
-                    host = future_to_host[future]
-                    response = future.result()
+        selected_index = 0
+        compact_mode = True
 
-                    host_stats[host]['sent'] += 1
+        executor = ThreadPoolExecutor(max_workers=max(8, len(hosts_order)))
+        futures = {}
 
-                    if response.result == 0 and response.latency:
-                        if not host_stats[host]['silenced']:
-                            playSound()
-                        host_stats[host]['received'] += 1
+        notifier = NotifierThread(host_stats, interval=1.0)
+        notifier.global_silence = global_silence
+        notifier.start()
 
-                    if response.result == 2:
-                        print(f"Host {host} not found")
+        # Initial pings
+        for h in hosts_order:
+            futures[h] = executor.submit(decideModeAndPing, h)
 
-                    host_stats[host]['results'].append(response)
+        # Timing control
+        UI_REFRESH_INTERVAL = 0.15
+        last_ui_refresh = 0.0
 
-                    # ------------------ NEW STATE TRACKING LOGIC ------------------
-                    new_state = "up" if (response.result == 0 and response.latency) else "down"
-                    old_state = host_stats[host]['current_state']
-                    now = time.time()
+        running = True
+        while running:
+            now = time.time()
 
-                    if old_state is None:
-                        host_stats[host]['current_state'] = new_state
-                        host_stats[host]['state_since'] = now
-                    else:
-                        if new_state != old_state:
-                            host_stats[host]['current_state'] = new_state
-                            host_stats[host]['state_since'] = now
+            # === 1. Process completed pings ===
+            for host in list(futures.keys()):
+                fut = futures[host]
+                if fut.done():
+                    try:
+                        response = fut.result()
+                    except Exception as e:
+                        logging.exception(f"Ping error for {host}: {e}")
+                        response = Ping_result(2, None, host)
 
-                    duration = now - host_stats[host]['state_since']
+                    stats = host_stats[host]
+                    stats['sent'] += 1
+                    stats['results'].append(response)
+                    if len(stats['results']) > 100:
+                        stats['results'] = stats['results'][-100:]
 
-                    if old_state is None:
-                        msg = f"{new_state.upper()} for at least {format_duration(duration)}"
-                    elif new_state != old_state:
-                        msg = f"{new_state.upper()} for {format_duration(duration)}"
-                    else:
-                        msg = f"{new_state.upper()} for at least {format_duration(duration)}"
+                    stats['latency'] = response.latency if response.result == 0 else None
 
-                    host_stats[host]['status_msg'] = msg
+                    new_state = "up" if response.result == 0 else "down"
+                    old_state = stats['current_state']
 
-            printStatus(host_stats)
-            wait_time = 2.0
-            check_interval = 0.1
-            steps = int(wait_time / check_interval)
-            for _ in range(steps):
-                if operatingSystem == 'windows' and msvcrt.kbhit():
-                    key = msvcrt.getch().decode('utf-8').lower()
-                    if key == 's':
-                        # Toggle silence for all hosts (or modify to target specific hosts)
-                        for host in host_stats:
-                            host_stats[host]['silenced'] = not host_stats[host]['silenced']
-                time.sleep(check_interval)
-    except KeyboardInterrupt:
-        print("Stopping ding")
+                    if old_state is None or new_state != old_state:
+                        stats['current_state'] = new_state
+                        stats['state_since'] = now
+
+                    if response.result == 0:
+                        stats['received'] += 1
+
+                    stats['status_msg'] = f"{new_state.upper()} {format_duration(now - stats['state_since'])}"
+
+                    stats['alerting'] = evaluate_alert(stats, new_state, old_state)
+
+                    # Immediately reschedule next ping
+                    del futures[host]
+                    futures[host] = executor.submit(decideModeAndPing, host)
+
+            # === 2. Refresh UI at fixed interval (smooth) ===
+            if now - last_ui_refresh >= UI_REFRESH_INTERVAL:
+                last_ui_refresh = now
+
+                if compact_mode:
+                    output = build_compact_view(hosts_order, host_stats, selected_index, global_silence)
+                else:
+                    output = build_legacy_view(host_stats, global_silence)
+
+                # Single write: no flicker!
+                sys.stdout.write("\033[H")  # Move to home without clearing
+                sys.stdout.write("\033[J")  # Clear from cursor to end (safer)
+                sys.stdout.write(output)
+                sys.stdout.flush()
+
+            # === 3. Non-blocking keyboard input (responsive!) ===
+            if msvcrt.kbhit():
+                ch = msvcrt.getwch()
+                if ch in ('\x00', '\xe0'):  # Special keys
+                    ch2 = msvcrt.getwch()
+                    if ch2 == 'H':      # Up
+                        selected_index = (selected_index - 1) % len(hosts_order)
+                    elif ch2 == 'P':    # Down
+                        selected_index = (selected_index + 1) % len(hosts_order)
+                    elif ch2 == 'K':    # Left (optional)
+                        pass
+                    elif ch2 == 'M':    # Right
+                        pass
+                else:
+                    key = ch.lower()
+                    if key == 'q':
+                        running = False
+                    elif key == '\t':
+                        compact_mode = not compact_mode
+                    elif key in 'jk':
+                        selected_index = (selected_index + (1 if key == 'j' else -1)) % len(hosts_order)
+                    elif key in '0123':
+                        host = hosts_order[selected_index]
+                        host_stats[host]['notify_mode'] = int(key)
+                        host_stats[host]['alert_since'] = None  # reset hold timer
+                    elif key == 's':
+                        global_silence = not global_silence
+                        notifier.global_silence = global_silence
+                        last_ui_refresh = 0
+
+                # Force immediate redraw after keypress
+                last_ui_refresh = 0
+
+            # Minimal sleep to keep CPU low but responsive
+            time.sleep(0.01)
+
     except Exception:
-        traceback.print_exc(file=sys.stdout)
-    sys.exit(0)
+        traceback.print_exc()
+    finally:
+        # Cleanup
+        sys.stdout.write("\033[?25h")  # Show cursor
+        sys.stdout.write("\033[H\033[J")  # Final clear
+        sys.stdout.flush()
+
+        try:
+            notifier.stop()
+            notifier.join(timeout=1.0)
+        except Exception:
+            pass
+        try:
+            executor.shutdown(wait=True, cancel_futures=True)
+        except Exception:
+            pass
+        print("ding stopped.")
 
 if __name__ == "__main__":
     # Auto-elevate if not admin
