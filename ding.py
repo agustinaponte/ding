@@ -20,7 +20,6 @@ from concurrent.futures import ThreadPoolExecutor
 import socket
 import struct
 import ctypes.wintypes as wintypes
-import shutil
 import threading
 
 # Load iphlpapi
@@ -396,7 +395,7 @@ def build_compact_view(hosts_order, stats, selected_index, global_silence):
         lat = f"{s['latency'] or '-':>4}ms" if s['latency'] is not None else "  -  "
         uptime = format_duration(time.time() - s['state_since']) if s.get('state_since') else "-"
         mode = modes[s.get('notify_mode', 3)]
-        alert = ANSI_INVERT + " ALERT " + ANSI_RESET if s.get('alerting') else ""
+        alert = ANSI_INVERT + " !!! " + ANSI_RESET if s.get('alerting') else ""
 
         lines.append(f"{sel} {host:<30} {col}{state:<4}{ANSI_RESET} {lat}  {uptime:<8}  {mode:<12} {alert}")
 
