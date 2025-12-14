@@ -25,6 +25,10 @@ import threading
 DOWN_THRESHOLD = 3   # failures in a row → DOWN
 UP_THRESHOLD = 2     # successes in a row → UP
 
+DEFAULT_PING_INTERVAL = 1.0  # seconds
+MIN_PING_INTERVAL = 0.2
+MAX_PING_INTERVAL = 10.0
+
 # Load iphlpapi
 iphlpapi = ctypes.WinDLL('iphlpapi')
 kernel32 = ctypes.WinDLL('kernel32')
@@ -380,12 +384,13 @@ class NotifierThread(threading.Thread):
                 # sleep a bit before checking again
                 time.sleep(0.2)
 
-def build_compact_view(hosts_order, stats, selected_index, global_silence):
+def build_compact_view(hosts_order, stats, selected_index, global_silence, ping_interval):
     lines = []
     lines.append(
         " DING - Real-time Ping Monitor     "
+        f"Freq: {ping_interval:.1f}s     "
         f"Silence: [{'ON ' if global_silence else 'OFF'}]     "
-        "TAB = toggle view • Q = quit • ↑↓/jk = select • 0-3 = mode"
+        "TAB = toggle view • Q = quit • ↑↓/jk = select • 0-3 = mode • F = freq"
     )
     lines.append("═" * 80)
 
@@ -420,6 +425,8 @@ def ding():
             filemode='a'
         )
 
+        ping_interval = DEFAULT_PING_INTERVAL
+
         # Hide cursor
         sys.stdout.write("\033[?25l")
         sys.stdout.flush()
@@ -437,6 +444,7 @@ def ding():
 
                 'current_state': None,
                 'state_since': now0,
+                'next_ping_time': now0,
 
                 'consecutive_up': 0,
                 'consecutive_down': 0,
@@ -460,10 +468,6 @@ def ding():
         notifier.global_silence = global_silence
         notifier.start()
 
-        # Initial pings
-        for h in hosts_order:
-            futures[h] = executor.submit(decideModeAndPing, h)
-
         # Timing control
         UI_REFRESH_INTERVAL = 0.15
         last_ui_refresh = 0.0
@@ -471,6 +475,13 @@ def ding():
         running = True
         while running:
             now = time.time()
+
+            # === 0. Schedule new pings based on frequency ===
+            for host in hosts_order:
+                if host not in futures:
+                    if now >= host_stats[host]['next_ping_time']:
+                        futures[host] = executor.submit(decideModeAndPing, host)
+                        host_stats[host]['next_ping_time'] = now + ping_interval
 
             # === 1. Process completed pings ===
             for host in list(futures.keys()):
@@ -541,18 +552,22 @@ def ding():
                     else:
                         stats['alerting'] = evaluate_alert(stats, new_state, old_state)
 
-                    stats['alerting'] = evaluate_alert(stats, new_state, old_state)
-
                     # Immediately reschedule next ping
                     del futures[host]
-                    futures[host] = executor.submit(decideModeAndPing, host)
 
             # === 2. Refresh UI at fixed interval (smooth) ===
             if now - last_ui_refresh >= UI_REFRESH_INTERVAL:
                 last_ui_refresh = now
 
                 if compact_mode:
-                    output = build_compact_view(hosts_order, host_stats, selected_index, global_silence)
+                    output = build_compact_view(
+                        hosts_order,
+                        host_stats,
+                        selected_index,
+                        global_silence,
+                        ping_interval
+                    )
+
                 else:
                     output = build_legacy_view(host_stats, global_silence)
 
@@ -591,6 +606,31 @@ def ding():
                         global_silence = not global_silence
                         notifier.global_silence = global_silence
                         last_ui_refresh = 0
+
+                    elif key == 'f':
+                        sys.stdout.write("\033[H\033[J")
+                        sys.stdout.write("Set ping frequency in seconds (0.2 – 10.0): ")
+                        sys.stdout.flush()
+
+                        try:
+                            # temporarily show cursor
+                            sys.stdout.write("\033[?25h")
+                            value = input().strip()
+                            new_interval = float(value)
+
+                            if MIN_PING_INTERVAL <= new_interval <= MAX_PING_INTERVAL:
+                                ping_interval = new_interval
+                            else:
+                                raise ValueError
+
+                        except ValueError:
+                            pass  # ignore invalid input
+
+                        finally:
+                            # hide cursor again
+                            sys.stdout.write("\033[?25l")
+                            last_ui_refresh = 0
+
 
                 # Force immediate redraw after keypress
                 last_ui_refresh = 0
