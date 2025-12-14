@@ -22,6 +22,9 @@ import struct
 import ctypes.wintypes as wintypes
 import threading
 
+DOWN_THRESHOLD = 3   # failures in a row → DOWN
+UP_THRESHOLD = 2     # successes in a row → UP
+
 # Load iphlpapi
 iphlpapi = ctypes.WinDLL('iphlpapi')
 kernel32 = ctypes.WinDLL('kernel32')
@@ -431,9 +434,15 @@ def ding():
                 'sent': 0,
                 'received': 0,
                 'results': [],
-                # removed per-host 'silenced'
+
                 'current_state': None,
                 'state_since': now0,
+
+                'consecutive_up': 0,
+                'consecutive_down': 0,
+                'warmup_left': 4,
+                'warmup_done': False,
+
                 'status_msg': "",
                 'notify_mode': 3,
                 'alerting': False,
@@ -481,17 +490,56 @@ def ding():
 
                     stats['latency'] = response.latency if response.result == 0 else None
 
-                    new_state = "up" if response.result == 0 else "down"
                     old_state = stats['current_state']
 
-                    if old_state is None or new_state != old_state:
+                    if response.result == 0:
+                        stats['consecutive_up'] += 1
+                        stats['consecutive_down'] = 0
+                    else:
+                        stats['consecutive_down'] += 1
+                        stats['consecutive_up'] = 0
+
+                    # --- Warm-up phase ---
+                    if not stats['warmup_done']:
+                        stats['warmup_left'] -= 1
+
+                        if stats['warmup_left'] <= 0:
+                            # Decide initial state by majority
+                            if stats['consecutive_down'] >= stats['consecutive_up']:
+                                stats['current_state'] = "down"
+                            else:
+                                stats['current_state'] = "up"
+
+                            stats['state_since'] = now
+                            stats['warmup_done'] = True
+
+                        # No alerts during warmup
+                        stats['alerting'] = False
+                        continue  # skip alert/state logic until warmup finishes
+
+                    # --- Normal state transitions ---
+                    new_state = old_state
+
+                    if old_state == "up" and stats['consecutive_down'] >= DOWN_THRESHOLD:
+                        new_state = "down"
+
+                    elif old_state == "down" and stats['consecutive_up'] >= UP_THRESHOLD:
+                        new_state = "up"
+
+                    if new_state != old_state:
                         stats['current_state'] = new_state
                         stats['state_since'] = now
+
 
                     if response.result == 0:
                         stats['received'] += 1
 
                     stats['status_msg'] = f"{new_state.upper()} {format_duration(now - stats['state_since'])}"
+
+                    if not stats['warmup_done']:
+                        stats['alerting'] = False
+                    else:
+                        stats['alerting'] = evaluate_alert(stats, new_state, old_state)
 
                     stats['alerting'] = evaluate_alert(stats, new_state, old_state)
 
