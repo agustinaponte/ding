@@ -490,7 +490,7 @@ class NotifierThread(threading.Thread):
                 # sleep a bit before checking again
                 time.sleep(0.2)
 
-def build_compact_view(hosts_order, stats, selected_index, global_silence, ping_interval):
+def build_compact_view(hosts_order, stats, selected_index, global_silence, ping_interval, pending_remove):
     lines = []
     lines.append(
         " DING - Real-time Ping Monitor     "
@@ -526,12 +526,17 @@ def build_compact_view(hosts_order, stats, selected_index, global_silence, ping_
             row_color = ANSI_RED
             row_reset = ANSI_RESET
 
-        lat = f"{s['latency'] or '-':>4}ms" if s['latency'] is not None else "  -  "
+        lat = f"{s['latency'] or '-':>4}ms" if s['latency'] is not None else "  --  "
         uptime = format_duration(time.time() - s['state_since']) if s.get('state_since') else "-"
         spark = render_latency_bar(s.get('results', []))
 
         mode = modes[s.get('notify_mode', 3)]
         alert = ANSI_INVERT + " !!! " + ANSI_RESET if s.get('alerting') else ""
+
+        confirm = ""
+        if host == pending_remove:
+            confirm = ANSI_INVERT + " (r)emove? " + ANSI_RESET
+
 
         lines.append(
             f"{row_color}"
@@ -542,6 +547,7 @@ def build_compact_view(hosts_order, stats, selected_index, global_silence, ping_
             f"{uptime:<8}  "
             f"{mode:<12} "
             f"{alert}"
+            f"{confirm}"
             f"{row_reset}"
         )
 
@@ -561,6 +567,7 @@ def build_help_panel():
    (q)uit      Exit ding
 
  Host commands (selected host):
+   (e)dit      Edit hostname / IP
    (0) none    (1) on up    (2) on down    (3) on change
    (c)lear     Reset host statistics
 ────────────────────────────────────────────────────────────
@@ -568,6 +575,11 @@ def build_help_panel():
 
 
 def ding():
+    def cancel_pending_remove():
+        nonlocal pending_remove
+        if pending_remove is not None:
+            pending_remove = None
+
     try:
         argv = parseArgs()
         logging.basicConfig(
@@ -588,6 +600,7 @@ def ding():
         global_silence = False
         show_help = False
         paused = False
+        pending_remove = None
 
         now0 = time.time()
         for host in hosts_order:
@@ -722,7 +735,8 @@ def ding():
                             host_stats,
                             selected_index,
                             global_silence,
-                            ping_interval
+                            ping_interval,
+                            pending_remove
                         )
                     )
                 else:
@@ -741,6 +755,7 @@ def ding():
             if msvcrt.kbhit():
                 ch = msvcrt.getwch()
                 if ch in ('\x00', '\xe0'):  # Special keys
+                    cancel_pending_remove()
                     ch2 = msvcrt.getwch()
                     if ch2 == 'H':      # Up
                         selected_index = (selected_index - 1) % len(hosts_order)
@@ -752,6 +767,8 @@ def ding():
                         pass
                 else:
                     key = ch.lower()
+                    if key != 'r':
+                        cancel_pending_remove()
                     if key == 'q':
                         running = False
                     elif key == '\t':
@@ -848,26 +865,86 @@ def ding():
                             sys.stdout.write("\033[?25l")
                             last_ui_refresh = 0
 
+                    elif key == 'e' and hosts_order:
+                        old_host = hosts_order[selected_index]
+
+                        sys.stdout.write("\033[H\033[J")
+                        sys.stdout.write(f"Edit host [{old_host}] (leave empty to cancel): ")
+                        sys.stdout.flush()
+                        sys.stdout.write("\033[?25h")
+
+                        try:
+                            new_host = input().strip()
+                            if not new_host or new_host == old_host:
+                                pass
+                            else:
+                                # Cancel pending ping
+                                fut = futures.pop(old_host, None)
+                                if fut:
+                                    try:
+                                        fut.cancel()
+                                    except Exception:
+                                        pass
+
+                                # Replace in order list
+                                hosts_order[selected_index] = new_host
+
+                                # Reset stats
+                                now = time.time()
+                                host_stats[new_host] = {
+                                    'sent': 0,
+                                    'received': 0,
+                                    'results': [],
+                                    'current_state': None,
+                                    'state_since': now,
+                                    'next_ping_time': now,
+                                    'consecutive_up': 0,
+                                    'consecutive_down': 0,
+                                    'warmup_left': WARMUP_PINGS,
+                                    'warmup_done': False,
+                                    'status_msg': "",
+                                    'notify_mode': 3,
+                                    'alerting': False,
+                                    'alert_since': None,
+                                    'latency': None,
+                                }
+
+                                # Remove old entry
+                                host_stats.pop(old_host, None)
+
+                        finally:
+                            sys.stdout.write("\033[?25l")
+                            last_ui_refresh = 0
+
                     elif key == 'r' and hosts_order:
                         host = hosts_order[selected_index]
 
-                        # cancel pending ping if any
-                        fut = futures.pop(host, None)
-                        if fut:
-                            try:
-                                fut.cancel()
-                            except Exception:
-                                pass
-
-                        host_stats.pop(host, None)
-                        hosts_order.pop(selected_index)
-
-                        if hosts_order:
-                            selected_index = min(selected_index, len(hosts_order) - 1)
+                        if pending_remove != host:
+                            pending_remove = host
                         else:
-                            selected_index = 0
+                            # Confirmed removal
+                            fut = futures.pop(host, None)
+                            if fut:
+                                try:
+                                    fut.cancel()
+                                except Exception:
+                                    pass
+
+                            host_stats.pop(host, None)
+                            hosts_order.pop(selected_index)
+
+                            pending_remove = None
+
+                            if hosts_order:
+                                selected_index = min(selected_index, len(hosts_order) - 1)
+                            else:
+                                selected_index = 0
 
                         last_ui_refresh = 0
+
+                    if key != 'r' and pending_remove:
+                        host_stats.get(pending_remove, {}).pop('_pending_remove', None)
+                        pending_remove = None
 
                 # Force immediate redraw after keypress
                 last_ui_refresh = 0
