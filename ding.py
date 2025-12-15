@@ -28,6 +28,7 @@ UP_THRESHOLD = 2     # successes in a row → UP
 DEFAULT_PING_INTERVAL = 1.0  # seconds
 MIN_PING_INTERVAL = 0.2
 MAX_PING_INTERVAL = 10.0
+WARMUP_PINGS = 6
 
 # Load iphlpapi
 iphlpapi = ctypes.WinDLL('iphlpapi')
@@ -390,7 +391,7 @@ def build_compact_view(hosts_order, stats, selected_index, global_silence, ping_
         " DING - Real-time Ping Monitor     "
         f"Freq: {ping_interval:.1f}s     "
         f"Silence: [{'ON ' if global_silence else 'OFF'}]     "
-        "TAB = toggle view • Q = quit • ↑↓/jk = select • 0-3 = mode • F = freq"
+        "TAB = toggle view • Q = quit • ↑↓/jk = select • 0-3 = mode • F = freq • H = help"
     )
     lines.append("═" * 80)
 
@@ -415,6 +416,25 @@ def build_legacy_view(host_stats, global_silence):
     # For now, just fall back to compact when not used
     return build_compact_view(list(host_stats.keys()), host_stats, 0, global_silence)
     
+def build_help_panel():
+    return """
+────────────────────────────────────────────────────────────
+ Global commands:
+   (f)req      Set ping frequency
+   (a)dd       Add host
+   (r)emove    Remove selected host
+   (s)ilence   Toggle global silence
+   (p)ause     Pause / resume pinging
+   (h)elp      Toggle this menu
+   (q)uit      Exit ding
+
+ Host commands (selected host):
+   (0) none    (1) on up    (2) on down    (3) on change
+   (c)lear     Reset host statistics
+────────────────────────────────────────────────────────────
+""".strip("\n")
+
+
 def ding():
     try:
         argv = parseArgs()
@@ -434,6 +454,8 @@ def ding():
         hosts_order = list(argv.hosts)
         host_stats = {}
         global_silence = False
+        show_help = False
+        paused = False
 
         now0 = time.time()
         for host in hosts_order:
@@ -448,7 +470,7 @@ def ding():
 
                 'consecutive_up': 0,
                 'consecutive_down': 0,
-                'warmup_left': 4,
+                'warmup_left': WARMUP_PINGS,
                 'warmup_done': False,
 
                 'status_msg': "",
@@ -477,11 +499,12 @@ def ding():
             now = time.time()
 
             # === 0. Schedule new pings based on frequency ===
-            for host in hosts_order:
-                if host not in futures:
-                    if now >= host_stats[host]['next_ping_time']:
-                        futures[host] = executor.submit(decideModeAndPing, host)
-                        host_stats[host]['next_ping_time'] = now + ping_interval
+            if not paused:
+                for host in hosts_order:
+                    if host not in futures:
+                        if now >= host_stats[host]['next_ping_time']:
+                            futures[host] = executor.submit(decideModeAndPing, host)
+                            host_stats[host]['next_ping_time'] = now + ping_interval
 
             # === 1. Process completed pings ===
             for host in list(futures.keys()):
@@ -516,13 +539,11 @@ def ding():
 
                         if stats['warmup_left'] <= 0:
                             # Decide initial state by majority
-                            if stats['consecutive_down'] >= stats['consecutive_up']:
-                                stats['current_state'] = "down"
-                            else:
-                                stats['current_state'] = "up"
-
+                            stats['current_state'] = "down" if stats['consecutive_down'] >= stats['consecutive_up'] else "up"
                             stats['state_since'] = now
                             stats['warmup_done'] = True
+                            stats['alert_since'] = None
+                            stats['alerting'] = False
 
                         # No alerts during warmup
                         stats['alerting'] = False
@@ -558,18 +579,25 @@ def ding():
             # === 2. Refresh UI at fixed interval (smooth) ===
             if now - last_ui_refresh >= UI_REFRESH_INTERVAL:
                 last_ui_refresh = now
+                parts = []
+                if show_help:
+                    parts.append(build_help_panel())
 
                 if compact_mode:
-                    output = build_compact_view(
-                        hosts_order,
-                        host_stats,
-                        selected_index,
-                        global_silence,
-                        ping_interval
+                    parts.append(
+                        build_compact_view(
+                            hosts_order,
+                            host_stats,
+                            selected_index,
+                            global_silence,
+                            ping_interval
+                        )
                     )
-
                 else:
-                    output = build_legacy_view(host_stats, global_silence)
+                    parts.append(build_legacy_view(host_stats, global_silence))
+
+                output = "\n".join(parts)
+
 
                 # Single write: no flicker!
                 sys.stdout.write("\033[H")  # Move to home without clearing
@@ -606,31 +634,108 @@ def ding():
                         global_silence = not global_silence
                         notifier.global_silence = global_silence
                         last_ui_refresh = 0
-
+                    elif key == 'h':
+                        show_help = not show_help
+                    elif key == 'p':
+                        paused = not paused
+                        last_ui_refresh = 0
                     elif key == 'f':
                         sys.stdout.write("\033[H\033[J")
                         sys.stdout.write("Set ping frequency in seconds (0.2 – 10.0): ")
                         sys.stdout.flush()
+                        sys.stdout.write("\033[?25h")
 
                         try:
-                            # temporarily show cursor
-                            sys.stdout.write("\033[?25h")
                             value = input().strip()
                             new_interval = float(value)
-
                             if MIN_PING_INTERVAL <= new_interval <= MAX_PING_INTERVAL:
                                 ping_interval = new_interval
-                            else:
-                                raise ValueError
-
                         except ValueError:
-                            pass  # ignore invalid input
-
+                            pass
                         finally:
-                            # hide cursor again
                             sys.stdout.write("\033[?25l")
                             last_ui_refresh = 0
 
+                    elif key == 'c':
+                        host = hosts_order[selected_index]
+                        now = time.time()
+                        host_stats[host].update({
+                            'sent': 0,
+                            'received': 0,
+                            'results': [],
+                            'consecutive_up': 0,
+                            'consecutive_down': 0,
+                            'current_state': None,
+                            'state_since': now,
+                            'warmup_left': WARMUP_PINGS,
+                            'warmup_done': False,
+                            'alerting': False,
+                            'alert_since': None,
+                            'latency': None,
+                        })
+                    
+                    elif key == 'a':
+                        sys.stdout.write("\033[H\033[J")
+                        sys.stdout.write("Add host(s) (space or comma separated): ")
+                        sys.stdout.flush()
+                        sys.stdout.write("\033[?25h")
+
+                        try:
+                            raw = input().strip()
+                            if not raw:
+                                return
+
+                            new_hosts = []
+                            for part in raw.replace(',', ' ').split():
+                                h = part.strip()
+                                if h and h not in host_stats:
+                                    new_hosts.append(h)
+
+                            now = time.time()
+                            for h in new_hosts:
+                                hosts_order.append(h)
+                                host_stats[h] = {
+                                    'sent': 0,
+                                    'received': 0,
+                                    'results': [],
+                                    'current_state': None,
+                                    'state_since': now,
+                                    'next_ping_time': now,
+                                    'consecutive_up': 0,
+                                    'consecutive_down': 0,
+                                    'warmup_left': WARMUP_PINGS,
+                                    'warmup_done': False,
+                                    'status_msg': "",
+                                    'notify_mode': 3,
+                                    'alerting': False,
+                                    'alert_since': None,
+                                    'latency': None,
+                                }
+
+                        finally:
+                            sys.stdout.write("\033[?25l")
+                            last_ui_refresh = 0
+
+                    elif key == 'r' and hosts_order:
+                        host = hosts_order[selected_index]
+
+                        # cancel pending ping if any
+                        fut = futures.pop(host, None)
+                        if fut:
+                            try:
+                                fut.cancel()
+                            except Exception:
+                                pass
+
+                        host_stats.pop(host, None)
+                        hosts_order.pop(selected_index)
+
+                        if hosts_order:
+                            selected_index = min(selected_index, len(hosts_order) - 1)
+                        else:
+                            selected_index = 0
+
+                        last_ui_refresh = 0
 
                 # Force immediate redraw after keypress
                 last_ui_refresh = 0
