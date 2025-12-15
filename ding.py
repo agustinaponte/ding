@@ -444,7 +444,7 @@ def evaluate_alert(stats, new_state, old_state):
 
     return False
 
-# --- Compact view and legacy view printing ---
+# --- Compact view printing ---
 # Colors (ANSI) - Windows 10+ terminals usually support these.
 ANSI_RESET = "\033[0m"
 ANSI_RED = "\033[91m"
@@ -547,11 +547,6 @@ def build_compact_view(hosts_order, stats, selected_index, global_silence, ping_
 
     lines.append("\n")
     return "\n".join(lines)
-
-def build_legacy_view(host_stats, global_silence):
-    # Keep your original panel layout if desired — or simplify
-    # For now, just fall back to compact when not used
-    return build_compact_view(list(host_stats.keys()), host_stats, 0, global_silence)
     
 def build_help_panel():
     return """
@@ -731,7 +726,7 @@ def ding():
                         )
                     )
                 else:
-                    parts.append(build_legacy_view(host_stats, global_silence))
+                    pass
 
                 output = "\n".join(parts)
 
