@@ -803,7 +803,7 @@ def ding():
                         try:
                             raw = input().strip()
                             if not raw:
-                                return
+                                pass
 
                             new_hosts = []
                             for part in raw.replace(',', ' ').split():
