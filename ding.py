@@ -76,28 +76,45 @@ def resize_terminal(width, height):
     kernel32.SetConsoleWindowInfo(handle, True, ctypes.byref(rect))
 
 def latency_to_bg_color(latency_ms):
-    """
-    Map latency to an ANSI 256-color background code.
-    Returns ANSI escape sequence string.
-    """
     if latency_ms is None:
-        # timeout
-        return "\033[48;5;196m"  # red
+        return "\033[48;5;196m"  # timeout → red
 
-    LATENCY_MIN = 20
-    LATENCY_MAX = 500
+    # Hard thresholds
+    GOOD_MAX = 80
+    WARN_MAX = 200
+    BAD_MAX  = 350
 
-    latency_ms = max(LATENCY_MIN, min(latency_ms, LATENCY_MAX))
+    latency_ms = max(0, latency_ms)
 
-    # Normalize 0.0 → 1.0
-    ratio = (latency_ms - LATENCY_MIN) / (LATENCY_MAX - LATENCY_MIN)
+    # --- GOOD: dark green → green ---
+    if latency_ms <= GOOD_MAX:
+        ratio = latency_ms / GOOD_MAX
+        r = 0
+        g = int(2 + ratio * 2)   # 2 → 4 (dark → green)
+        b = 0
 
-    # Map into green→red range
-    COLOR_START = 22   # green
-    COLOR_END   = 196  # red
+    # --- WARNING: green → yellow ---
+    elif latency_ms <= WARN_MAX:
+        ratio = (latency_ms - GOOD_MAX) / (WARN_MAX - GOOD_MAX)
+        r = int(ratio * 5)       # 0 → 5
+        g = 4
+        b = 0
 
-    color = int(COLOR_START + ratio * (COLOR_END - COLOR_START))    
+    # --- BAD: yellow → red ---
+    elif latency_ms <= BAD_MAX:
+        ratio = (latency_ms - WARN_MAX) / (BAD_MAX - WARN_MAX)
+        r = 5
+        g = int((1 - ratio) * 4) # 4 → 0
+        b = 0
+
+    # --- VERY BAD: solid red ---
+    else:
+        return "\033[48;5;196m"
+
+    color = 16 + 36*r + 6*g + b
+
     return f"\033[48;5;{color}m"
+
 
 def render_latency_bar(results, width=SPARKLINE_WIDTH):
     """
