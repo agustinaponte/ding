@@ -30,6 +30,12 @@ MIN_PING_INTERVAL = 0.2
 MAX_PING_INTERVAL = 10.0
 WARMUP_PINGS = 6
 
+SPARKLINE_WIDTH = 12
+HIGH_LATENCY_MS = 500
+
+SPARK_CHARS = "▁▂▃▄▅▆▇█"
+SPARK_FAIL_CHAR = "×"
+
 # Load iphlpapi
 iphlpapi = ctypes.WinDLL('iphlpapi')
 kernel32 = ctypes.WinDLL('kernel32')
@@ -68,6 +74,55 @@ def resize_terminal(width, height):
     # Set window size
     rect = wintypes.SMALL_RECT(0, 0, width - 1, height - 1)
     kernel32.SetConsoleWindowInfo(handle, True, ctypes.byref(rect))
+
+def latency_to_bg_color(latency_ms):
+    """
+    Map latency to an ANSI 256-color background code.
+    Returns ANSI escape sequence string.
+    """
+    if latency_ms is None:
+        # timeout
+        return "\033[48;5;196m"  # red
+
+    LATENCY_MIN = 20
+    LATENCY_MAX = 500
+
+    latency_ms = max(LATENCY_MIN, min(latency_ms, LATENCY_MAX))
+
+    # Normalize 0.0 → 1.0
+    ratio = (latency_ms - LATENCY_MIN) / (LATENCY_MAX - LATENCY_MIN)
+
+    # Map into green→red range
+    COLOR_START = 22   # green
+    COLOR_END   = 196  # red
+
+    color = int(COLOR_START + ratio * (COLOR_END - COLOR_START))    
+    return f"\033[48;5;{color}m"
+
+def render_latency_bar(results, width=SPARKLINE_WIDTH):
+    """
+    Render latency history using background-colored spaces.
+    """
+    if not results:
+        return " " * width
+
+    recent = results[-width:]
+    out = []
+
+    for r in recent:
+        if r.latency is None:
+            # timeout
+            out.append("\033[48;5;196mx\033[0m")
+        else:
+            bg = latency_to_bg_color(r.latency)
+            out.append(f"{bg} \033[0m")
+
+    # Pad left if needed
+    if len(out) < width:
+        out = [" "] * (width - len(out)) + out
+
+    return "".join(out)
+
 
 def choose_optimal_terminal_size(num_hosts, min_panel_width=24, base_height=20):
     """
@@ -289,6 +344,39 @@ def format_duration(seconds):
     else:
         return f"{int(seconds // 3600)} h"
 
+def render_latency_sparkline(results, width=SPARKLINE_WIDTH):
+    """
+    Build a sparkline from recent ping results.
+    Success -> scaled block
+    Failure -> ×
+    """
+    if not results:
+        return " " * width
+
+    recent = results[-width:]
+
+    # Extract latencies (None for failures)
+    latencies = [r.latency for r in recent]
+
+    valid = [v for v in latencies if v is not None]
+    if not valid:
+        return SPARK_FAIL_CHAR * len(latencies)
+
+    lo = min(valid)
+    hi = max(valid)
+    span = max(hi - lo, 1)
+
+    out = []
+    for v in latencies:
+        if v is None:
+            out.append(SPARK_FAIL_CHAR)
+        else:
+            idx = int((v - lo) / span * (len(SPARK_CHARS) - 1))
+            out.append(SPARK_CHARS[idx])
+
+    return "".join(out).rjust(width)
+
+
 # --- Evaluate whether a host is "alerting" according to its notify_mode ---
 # Modes:
 # 0 = no notification
@@ -400,13 +488,45 @@ def build_compact_view(hosts_order, stats, selected_index, global_silence, ping_
         s = stats[host]
         sel = ">" if i == selected_index else " "
         state = (s['current_state'] or "?").upper()
-        col = ANSI_GREEN if state == "UP" else ANSI_RED if state == "DOWN" else ANSI_YELLOW
+        # State label color (only for the UP/DOWN text)
+        if state == "UP":
+            col = ANSI_GREEN
+        elif state == "DOWN":
+            col = ANSI_RED
+        else:
+            col = ANSI_YELLOW
+
+        row_color = ""
+        row_reset = ""
+
+        # DOWN always red
+        if state == "DOWN":
+            row_color = ANSI_RED
+            row_reset = ANSI_RESET
+
+        # High latency warning (only if UP)
+        elif s['latency'] is not None and s['latency'] >= HIGH_LATENCY_MS:
+            row_color = ANSI_RED
+            row_reset = ANSI_RESET
+
         lat = f"{s['latency'] or '-':>4}ms" if s['latency'] is not None else "  -  "
         uptime = format_duration(time.time() - s['state_since']) if s.get('state_since') else "-"
+        spark = render_latency_bar(s.get('results', []))
+
         mode = modes[s.get('notify_mode', 3)]
         alert = ANSI_INVERT + " !!! " + ANSI_RESET if s.get('alerting') else ""
 
-        lines.append(f"{sel} {host:<30} {col}{state:<4}{ANSI_RESET} {lat}  {uptime:<8}  {mode:<12} {alert}")
+        lines.append(
+            f"{row_color}"
+            f"{sel} {host:<28} "
+            f"{col}{state:<4}{ANSI_RESET} "
+            f"{lat} "
+            f"{spark}  "
+            f"{uptime:<8}  "
+            f"{mode:<12} "
+            f"{alert}"
+            f"{row_reset}"
+        )
 
     lines.append("\n")
     return "\n".join(lines)
