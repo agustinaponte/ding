@@ -751,20 +751,33 @@ def ding():
                 sys.stdout.write(output)
                 sys.stdout.flush()
 
-            # === 3. Non-blocking keyboard input (responsive!) ===
+            # === 3. Non-blocking keyboard input ===
             if msvcrt.kbhit():
                 ch = msvcrt.getwch()
                 if ch in ('\x00', '\xe0'):  # Special keys
                     cancel_pending_remove()
                     ch2 = msvcrt.getwch()
+
                     if ch2 == 'H':      # Up
                         selected_index = (selected_index - 1) % len(hosts_order)
+
                     elif ch2 == 'P':    # Down
                         selected_index = (selected_index + 1) % len(hosts_order)
-                    elif ch2 == 'K':    # Left (optional)
-                        pass
-                    elif ch2 == 'M':    # Right
-                        pass
+
+                    elif ch2 == 'K':    # Left  -> previous notify mode
+                        if hosts_order:
+                            host = hosts_order[selected_index]
+                            mode = host_stats[host]['notify_mode']
+                            host_stats[host]['notify_mode'] = (mode - 1) % 4
+                            host_stats[host]['alert_since'] = None
+
+                    elif ch2 == 'M':    # Right -> next notify mode
+                        if hosts_order:
+                            host = hosts_order[selected_index]
+                            mode = host_stats[host]['notify_mode']
+                            host_stats[host]['notify_mode'] = (mode + 1) % 4
+                            host_stats[host]['alert_since'] = None
+
                 else:
                     key = ch.lower()
                     if key != 'r':
