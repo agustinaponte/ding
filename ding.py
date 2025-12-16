@@ -493,12 +493,15 @@ class NotifierThread(threading.Thread):
 def build_compact_view(hosts_order, stats, selected_index, global_silence, ping_interval, pending_remove):
     lines = []
     lines.append(
-        " DING - Real-time Ping Monitor     "
-        f"Freq: {ping_interval:.1f}s     "
-        f"Silence: [{'ON ' if global_silence else 'OFF'}]     "
-        "TAB = toggle view • Q = quit • ↑↓/jk = select • 0-3 = mode • F = freq • H = help"
+        " DING - "
+        f"Freq: {ping_interval:.1f}s - "
+        f"(s)ilence: [{'ON ' if global_silence else 'OFF'}] - "
+        "(q)uit • (h)elp"
     )
-    lines.append("═" * 80)
+    lines.append("═" * 60)
+
+    lines.append(" "*4+"host"+" "*20+"| status "+"|     latency"+" "*5+ "| uptime "+"| notification mode")
+    
 
     modes = ["none", "on up", "on down", "on change"]
     for i, host in enumerate(hosts_order):
@@ -526,7 +529,7 @@ def build_compact_view(hosts_order, stats, selected_index, global_silence, ping_
             row_color = ANSI_RED
             row_reset = ANSI_RESET
 
-        lat = f"{s['latency'] or '-':>4}ms" if s['latency'] is not None else "  --  "
+        lat = f"{s['latency'] or '--':>4}ms" if s['latency'] is not None else "  --  "
         uptime = format_duration(time.time() - s['state_since']) if s.get('state_since') else "-"
         spark = render_latency_bar(s.get('results', []))
 
