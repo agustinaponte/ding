@@ -498,9 +498,9 @@ def build_compact_view(hosts_order, stats, selected_index, global_silence, ping_
         f"(s)ilence: [{'ON ' if global_silence else 'OFF'}] - "
         "(q)uit • (h)elp"
     )
-    lines.append("═" * 60)
+    lines.append("═" * 80)
 
-    lines.append(" "*4+"host"+" "*20+"| status "+"|     latency"+" "*5+ "| uptime "+"| notification mode")
+    lines.append(" "*4+"host"+" "*20+"| status "+"|     latency"+" "*5+ "| uptime "+"| notification")
     
 
     modes = ["none", "on up", "on down", "on change"]
